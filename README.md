@@ -18,29 +18,119 @@
 
 <div align="left">
     <p>
-        <strong>form-net</strong> parses what browsers send when a form is submitted: <code>application/x-www-form-urlencoded</code> fields and <code>multipart/form-data</code> uploads. It does no I/O; feed it bytes as they arrive and it yields fields and file parts as they complete, so a large upload is streamed, never held in memory whole.
+        <strong>form-net</strong> parses what browsers send when a form is submitted: <code>application/x-www-form-urlencoded</code> fields and <code>multipart/form-data</code> uploads. It does no I/O; feed it bytes as they arrive, in chunks of any size, and it yields fields and file parts as they complete, so a large upload is streamed, never held in memory whole.
     </p>
     <p>
-        Every budget (field count, name and value length, part count, part header size, file size, total size) is checked before the bytes it governs are buffered. Malformed input is refused with a precise error, never guessed at.
+        Every budget (field count, name and value length, part count, part header size, file count and size, total size) is checked before the bytes it governs are buffered. Input that two parsers could read differently is refused with a precise error, never repaired. Uploads larger than a threshold go to private, randomly named temporary files that cannot outlive the request, or even a crash. A client's file name is never used as a path.
     </p>
     <br>
     <hr>
     <p>
-        <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>#![forbid(unsafe_code)]</code>.
+        <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>#![forbid(unsafe_code)]</code>. No third-party dependencies.
     </p>
     <blockquote>
-        <strong>Status: scaffold (<code>0.1.0</code>).</strong> No functional code yet. The design is written down in <a href="./dev/PLAN.md"><code>dev/PLAN.md</code></a> and the schedule in <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>; the public API is locked in <code>0.2.0</code>.
+        <strong>Status: design lock (<code>0.2.0</code>).</strong> The public API is written down item by item in <a href="./docs/API.md"><code>docs/API.md</code></a>; the parsers arrive in <code>0.3.0</code>, storage and typed extraction in <code>0.4.0</code>. The schedule is in <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
 <hr>
 <br>
 
+## Features
+
+The plan for 1.0. Each item names the version that ships it.
+
+### **Parsing**
+- **urlencoded** (0.3) - the WHATWG algorithm with strict refusal: `&` is the only separator, a malformed `%` and invalid UTF-8 are refused, never replaced. Zero copy when nothing needs decoding; a decoder that writes into your buffer and never allocates.
+- **Streaming multipart** (0.3) - sans-IO: bytes in, events out, identical for every split of the input. The boundary search is linear and never rescans a byte.
+- **Strict framing** (0.3) - bare LF, header folding, duplicate headers and parameters, transfer encodings, nested multipart, `\"` in quoted values, and a missing close delimiter are refused: the constructs where a firewall in front and the application behind could disagree.
+- **`no_std` core** (0.3) - the Tier 3 parsers run without `alloc`, on buffers you provide.
+
+### **Uploads**
+- **Safe spilling** (0.4) - files over a threshold go to temporary files in a private directory, created with random names and `create_new`, owner-only, deleted on drop and on abort; in the default mode the operating system removes them if the process dies.
+- **Disk budgets** (0.4, 0.5) - a limit per request and a budget shared across requests (pluggable, so it can cover a host or a fleet); the request that would cross it is refused with a 503 hint.
+- **File names as data** (0.3, 0.4) - raw bytes, base name, a sanitized portable name, an NFC form; never a path.
+
+### **Integration**
+- **Inspection hooks** (0.4) - an inspector sees every part head, the first bytes of every file, and every field before anything is stored, in one pass.
+- **Anti-forgery token first** (0.4) - the token field is captured, and a file that arrives before it is refused, so a forged upload costs no disk.
+- **Typed forms without serde** (0.4) - one declarative macro; unknown, repeated, and missing fields refused; errors name the field, never echo input.
+- **Client side** (0.3, 0.5) - a urlencoded serializer and a multipart writer whose output always parses back to the same fields.
+
+---
+
+<br>
+
+## Installation
+
+```toml
+[dependencies]
+form-net = "0.2"
+```
+
+`0.2.0` contains the API document and no parsing code; use `0.3` or later to parse forms.
+
+---
+
+<br>
+
+## Quick start
+
+The API below is fixed by the design lock and ships in the versions shown.
+
+```rust
+use form_net as fnet;
+
+// A urlencoded body (0.3)
+let form = fnet::parse_urlencoded(b"email=a%40b.example&remember=on")?;
+assert_eq!(form.get("email"), Some("a@b.example"));
+
+// A query string (0.3)
+let query = fnet::parse_query(b"?q=rust+forms&page=2")?;
+assert_eq!(query.get("q"), Some("rust forms"));
+
+// A buffered multipart body (0.3)
+let mp = fnet::parse_multipart(content_type, body)?;
+let title = mp.field("title").unwrap_or("");
+
+// A typed form, either encoding (0.4)
+fnet::form! {
+    pub struct Login {
+        pub email: String,
+        pub password: fnet::Secret,
+        pub remember: bool,
+    }
+    ignore = ["csrf_token"];
+}
+let login = Login::from_body(content_type, body)?;
+
+// An upload streamed to private temporary files (0.4, feature `fs`)
+let upload = fnet::read_multipart(content_type, request_body)?;
+if let Some(file) = upload.file("document") {
+    file.persist(&destination)?;          // never overwrites
+}
+```
+
+Configuration (limits per route, policies, inspectors, stores) and the allocation-free Tier 3 surface are in [`docs/API.md`](./docs/API.md).
+
+---
+
+<br>
+
 ## Scope
 
-urlencoded decoding (percent-escapes, plus as space, strict UTF-8), streaming multipart parsing (boundary scanning in linear time, part headers, Content-Disposition names and file names), budgets for every dimension, and zero-copy field views. Content inspection of the parts is customs-sec's job.
+form-net decides whether bytes are a well-formed form. Whether the form is acceptable for a route (schemas, allowed file types by content, Unicode rules) is customs-sec's job; whether the request came from the site's own page is csrf-sec's. HTTP framing is http-net's. See [`dev/PLAN.md`](./dev/PLAN.md) for the full scope, what is deliberately left to other crates, the threat model, and the decision log.
 
-See [`dev/PLAN.md`](./dev/PLAN.md) for the full scope, what is deliberately left to other crates, and the decision log.
+---
+
+<br>
+
+## Documentation
+
+- [`docs/API.md`](./docs/API.md) - every public item, with signatures, behaviour, errors, and examples.
+- [`dev/PLAN.md`](./dev/PLAN.md) - design, requirements, threats, performance targets, decisions.
+- [`dev/ROADMAP.md`](./dev/ROADMAP.md) - versions and exit criteria.
+- [`CHANGELOG.md`](./CHANGELOG.md) and [`docs/release/`](./docs/release/).
 
 <hr>
 <br>
@@ -55,8 +145,8 @@ See <a href="./dev/DIRECTIVES.md"><code>dev/DIRECTIVES.md</code></a> for enginee
     <h2>License</h2>
     <p>Licensed under either of</p>
     <ul>
-        <li><b>Apache License, Version 2.0</b> &mdash; <a href="./LICENSE-APACHE">LICENSE-APACHE</a></li>
-        <li><b>MIT License</b> &mdash; <a href="./LICENSE-MIT">LICENSE-MIT</a></li>
+        <li><b>Apache License, Version 2.0</b> - <a href="./LICENSE-APACHE">LICENSE-APACHE</a></li>
+        <li><b>MIT License</b> - <a href="./LICENSE-MIT">LICENSE-MIT</a></li>
     </ul>
     <p>at your option.</p>
 </div>

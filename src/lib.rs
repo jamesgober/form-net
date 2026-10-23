@@ -1,13 +1,17 @@
 //! # form_net
 //!
-//! Sans-IO form parsing for Rust: application/x-www-form-urlencoded and streaming multipart/form-data, with budgets checked before allocation. No dependencies.
+//! Sans-IO form parsing for Rust: `application/x-www-form-urlencoded` and
+//! streaming `multipart/form-data`, with budgets checked before allocation,
+//! safe spilling of uploads, and typed extraction. No third-party
+//! dependencies.
 //!
 //! ## Status
 //!
-//! Scaffold. The design is written down in `dev/PLAN.md` and the milestone
-//! schedule in `dev/ROADMAP.md` (both in the
-//! [repository](https://github.com/jamesgober/form-net)); the public API
-//! begins with `0.2.0`.
+//! Design lock (`0.2.0`). The public API is specified item by item in
+//! `docs/API.md`, the design in `dev/PLAN.md`, and the schedule in
+//! `dev/ROADMAP.md` (all in the
+//! [repository](https://github.com/jamesgober/form-net)). The parsers ship
+//! in `0.3.0`.
 
 #![doc(html_root_url = "https://docs.rs/form-net")]
 #![cfg_attr(docsrs, feature(doc_cfg))]

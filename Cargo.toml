@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "form-net"
-version = "0.1.0"
+version = "0.2.0"
 
 # Minimum Supported Rust Version (MSRV)
 rust-version = "1.85"
@@ -16,7 +16,7 @@ license = "Apache-2.0 OR MIT"
 readme = "README.md"
 
 # Description
-description = "Sans-IO form parsing for Rust: application/x-www-form-urlencoded and streaming multipart/form-data, with budgets checked before allocation. No dependencies."
+description = "Sans-IO form parsing for Rust: application/x-www-form-urlencoded and streaming multipart/form-data, with budgets checked before allocation, safe upload spilling, and typed extraction. No third-party dependencies."
 
 # Keywords (5 max)
 keywords = ["form", "multipart", "urlencoded", "upload", "http"]

@@ -1,4 +1,4 @@
-# form-net &mdash; Engineering Directives
+# form-net - Engineering Directives
 
 > Engineering standards and the definition of done for this project. Read alongside `REPS.md` (root, authoritative), [`PLAN.md`](./PLAN.md) (design and decisions), and [`ROADMAP.md`](./ROADMAP.md) (current phase). If anything here conflicts with `REPS.md`, `REPS.md` wins, except where `PLAN.md` records an approved exception.
 
@@ -12,7 +12,7 @@ This library is built and maintained to a production standard and treated as a f
 
 ## 1. What this is
 
-form-net is a sans-IO, `no_std` (with `alloc`) parser for `application/x-www-form-urlencoded` and streaming `multipart/form-data`. It decides whether bytes are a well-formed form; customs-sec decides whether the form is acceptable. See `PLAN.md` section 1.
+form-net is a sans-IO parser for `application/x-www-form-urlencoded` and streaming `multipart/form-data`, with a `no_std` core that needs no `alloc`, safe spilling of uploads to temporary files (`fs`), typed extraction without serde, and hooks for content inspection and anti-forgery token capture. It decides whether bytes are a well-formed form; customs-sec decides whether the form is acceptable. See `PLAN.md` section 1 and `../docs/API.md`.
 
 ---
 
@@ -21,10 +21,10 @@ form-net is a sans-IO, `no_std` (with `alloc`) parser for `application/x-www-for
 - **Ours, not rented.** No third-party runtime dependency, except the exceptions recorded in `PLAN.md` (audited cryptography through `crypt-io`; rustls in `tls-net` only). First-party crates are wired when first used, at published versions (no `path` dependencies across repositories). Dev-only test tooling (`criterion`, `proptest`) is allowed.
 - **Sans-IO where it is a protocol.** A protocol engine does no I/O: bytes in, events out; messages in, bytes out. Transport belongs to net-io and serve-net.
 - **Strict standards.** Follow the RFCs exactly. Input that two implementations could interpret differently is refused, never repaired.
-- **Unsafe.** `#![forbid(unsafe_code)]`. This crate has no reason to touch raw memory or the OS directly.
+- **Unsafe.** `#![forbid(unsafe_code)]`, with no exception. Everything the temporary-file design needs is reachable through safe `std` APIs (`PLAN.md` section 9).
 - **Hostile-input hardening.** Explicit budgets for bytes, time, and counts, each checked before the resource is committed; no reachable panics; no quadratic paths; linear-time scanning.
 - **Fail closed.** When a check cannot run, the answer is no.
-- **Secrets.** Compared in constant time, zeroized after use, never in logs, errors, or `Debug` output.
+- **Secrets.** Form values can be secrets: every owned value is wiped on drop (best effort without `unsafe`), and no value or file name ever appears in logs, errors, or `Debug` output. form-net compares no secret; the anti-forgery token is compared by csrf-sec in constant time.
 - **Performance.** Peak is the baseline: zero-copy views, allocation-free hot paths, no "faster" claim without `criterion` numbers at realistic scale.
 - **Cross-platform.** Linux, macOS, and Windows are first-class, verified by CI on stable and MSRV 1.85.
 - **Error handling.** Every fallible path returns `Result`; errors are `#[non_exhaustive]`, precise, and say what was refused.
