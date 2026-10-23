@@ -156,6 +156,37 @@ impl fmt::Debug for PartHead<'_> {
 }
 
 impl<'p> PartHead<'p> {
+    /// A head over bytes kept elsewhere (an owned copy).
+    #[cfg(feature = "alloc")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) const fn from_parts(
+        index: u32,
+        block: &'p [u8],
+        name: &'p str,
+        name_raw: &'p [u8],
+        kind: PartKind,
+        filename: Option<FileName<'p>>,
+        content_type: Option<&'p [u8]>,
+        charset: Charset,
+    ) -> Self {
+        Self {
+            index,
+            block,
+            name,
+            name_raw,
+            kind,
+            filename,
+            content_type,
+            charset,
+        }
+    }
+
+    /// The header block, the final CRLF CRLF included.
+    #[cfg(feature = "alloc")]
+    pub(crate) const fn block(&self) -> &'p [u8] {
+        self.block
+    }
+
     /// The part index, from 0, in body order.
     #[must_use]
     pub const fn index(&self) -> u32 {

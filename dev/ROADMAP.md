@@ -42,20 +42,21 @@ Exit: everything below green on the full CI matrix, including the bare-metal `no
 - [x] Defence idea recorded and measured: state-2 priming (PLAN 14).
 - [x] Examples: `urlencoded_basic`, `query_string`, `multipart_buffered`, `multipart_sans_io`, `no_std_core`.
 
-## v0.4.0 - Extended
+## v0.4.0 - Extended (DONE 2026-10-23)
 
 Exit: storage, crash, and abort tests green on Linux, macOS, and Windows; the hook order test green at every split; the token tests green; customs-sec and web-net maintainers have reviewed the `Inspector` and `FromForm` shapes against their plans.
 
-- [ ] Wire path-lib and mod-rand; features `random`, `fs`.
-- [ ] Hooks: #52 to #54, #63, #64, #66.
-- [ ] Storage: #10 to #13, #21, #35 to #38, #68, #70.
-- [ ] Blocking readers: #34.
-- [ ] Typed extraction: #14 to #17, #56, #61, #62.
-- [ ] File names: #22.
-- [ ] Tests: `store_unix.rs`, `store_windows.rs` (permissions, flags, anonymous and named modes, persist, read-only and missing directories); `crash.rs` (kill a child process mid-upload); `abort.rs` (abort at every byte of a 3-file body, then count files and handles); `inspector_order.rs`; `token_field.rs`; `extract.rs` (every value rule of API.md, every arity rule, 0 and 64 fields); attack tests T-7 to T-11, T-20 to T-27, T-29 (fuzz), T-31, T-33, T-38.
-- [ ] Fuzz targets `fuzz_extract` and an upload-session target.
-- [ ] Defence idea: token before the first file (PLAN 14).
-- [ ] Examples: `upload_to_disk`, `upload_session_push`, `typed_form`, `content_inspector`, `token_first`.
+- [x] Wire path-lib and mod-rand; features `random`, `fs`. Wire crypt-io for the volatile wipe (D-083).
+- [x] Hooks: #52 to #54, #63, #64, #66.
+- [x] Storage: #10 to #13, #21, #35 to #38, #68, #70.
+- [x] Blocking readers: #34.
+- [x] Typed extraction: #14 to #17, #56, #61, #62.
+- [x] File names: #22 (default-ignorable characters replaced, D-084).
+- [x] Tests: `store.rs` (one file with per-platform cases: permissions, flags, anonymous and named modes, persist, files and links refused as directories); `crash.rs` (kill a child process mid-upload); `abort.rs` (abort at every byte of a 3-file body, then count files, and handles on Linux); `inspector_order.rs`; token tests in `attacks.rs` and `attacks_upload.rs`; `extract.rs` (value and arity rules, 0 and 64 fields); attack tests T-7 to T-11 (the shared budget part of T-7 and `sweep` part of T-11 with their 0.5 items), T-20 to T-27, T-29 (fuzz), T-31 (D-085), T-38. T-33 moves to 0.5 with `memory_bound` (D-087).
+- [x] Fuzz targets `fuzz_extract` and `fuzz_upload_session`.
+- [x] Defence idea: token before the first file (PLAN 14).
+- [x] Examples: `upload_to_disk`, `upload_session_push`, `typed_form`, `content_inspector`, `token_first`.
+- [x] Exit review of the `Inspector` and `FromForm` shapes against the customs-sec and web-net plans (both are scaffolds without form-net code yet): no blocker; inspector chaining (D-088) and lazy sink open (D-089) done in 0.4, Send and Sync asserted for every storage type, three additive shapes scheduled for 0.5 (D-090).
 
 ## v0.5.0 - Feature complete
 
@@ -64,10 +65,11 @@ Exit: every P0, P1, and P2 item exists, is documented with runnable examples, an
 - [ ] Wire unicode-lang; feature `unicode`.
 - [ ] #23, #25, #39, #40, #42, #43, #47, #55, #67, #71.
 - [ ] `loom` model of `SpillQuota` (three threads: never over the limit, never negative, no lost release) and a CI job for it.
-- [ ] Tests: `writer.rs`, `memory_bound.rs` (peak-tracking allocator), `sweep` cases, attack tests T-34, T-35.
+- [ ] Tests: `writer.rs`, `memory_bound.rs` (peak-tracking allocator), `sweep` cases, attack tests T-7 (shared budget, parallel uploads), T-11 (named mode plus `sweep`), T-21 (NFD names with `unicode`), T-33, T-34, T-35.
 - [ ] Fuzz targets `fuzz_urlencoded_stream`, `fuzz_writer_roundtrip`.
 - [ ] `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`; `docs/API.md` complete with runnable examples.
 - [ ] Defence idea: a budget per tenant (PLAN 14).
+- [ ] Shapes from the 0.4 consumer review (D-090): `FromForm::from_upload_mut`, all-errors extraction, one owned accessor type for both encodings.
 - [ ] Example: `build_multipart_client`.
 
 ## v0.6.0 - Optimisation

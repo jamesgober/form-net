@@ -13,6 +13,68 @@
 
 ---
 
+## [0.4.0] - 2026-10-23
+
+Upload storage, inspection hooks, blocking readers, and typed extraction.
+
+### Added
+
+- Inspection: the `Inspector` trait (`part_start`, `sniff`, `data`,
+  `field`, `part_end`, `end`, `failed`) with `Verdict` and `Refusal`, called
+  in a fixed order at every split; `parse_multipart_inspected` and
+  `parse_urlencoded_inspected`; `NoInspector`.
+- Storage hooks: the `Sink` trait, `DiscardSink`, `MemorySink`, and the
+  `Driver`, which runs a `MultipartParser`, an inspector, and a sink and
+  guarantees that `part_start` and `sniff` come before any sink write.
+  `OwnedPartHead` keeps a part head past the parser's next call. The
+  driver opens the sink only after the inspector has accepted the part, so
+  a refused part never reaches storage.
+- Inspector chains: `(A, B)` runs two inspectors in one pass (the first
+  refusal wins) and `Box<I>` holds one chosen at run time.
+- Storage (feature `fs`): `Store` (`temp`, `memory_only`, `in_dir`,
+  `memory_threshold`, `max_disk_bytes`, `mode`, `stats`), `StoredFile`
+  (positional `reader`, `read_to_vec`, `persist` that never overwrites),
+  `Upload`, `UploadSession` for pushed chunks, and `read_multipart` for any
+  `Read`. Spill files live in a private directory (`form-net-` plus 128
+  random bits, 0700) with random names, `create_new`, and 0600; in the default
+  anonymous mode they have no name (unlinked on Unix, delete-on-close on
+  Windows) and cannot outlive the process. Every file is deleted on drop, on
+  abort, and on any parse error.
+- `TokenField` with `BeforeFirstFile` enforced through the driver: a file
+  before the token is refused at its first header, before the sink opens;
+  `UploadSession::captured_token` gives the token as soon as its part ends.
+- Blocking readers (feature `std`): `MultipartReader` and `PartReader`
+  (`text`, `skip`, `save`, `Read`).
+- Typed extraction: `form!`, `FromForm` (`from_urlencoded`, `from_query`,
+  `from_multipart`, `from_body`, `from_upload`, and the `_with` and
+  `_inspected` forms), `FromField` for strings, integers (strict), finite
+  floats, `bool` (checkbox), `char`, `Option`, `Vec`, `Secret`, `FileData`,
+  and `StoredFile`. Unknown, repeated, missing, and invalid fields are
+  refused; errors name the field and never echo input.
+- `FileName::sanitized`: one portable name segment through
+  `path_lib::sanitize`, with Unicode default-ignorable characters replaced.
+- Examples `upload_to_disk`, `upload_session_push`, `typed_form`,
+  `content_inspector`, `token_first`.
+
+### Changed
+
+- Owned values are wiped with crypt-io's volatile `wipe` (whole allocation)
+  instead of `fill(0)` with `black_box`; growing buffers wipe the old
+  allocation after each move. This brings `zeroize` and `subtle` under
+  `alloc`, the audited-cryptography exception.
+
+### Security
+
+- Each 0.4 threat in `dev/PLAN.md` has its test: disk limits (T-7), abort at
+  every byte of a 3-file body leaves no file or handle (T-8), planted files
+  and links never opened (T-9), owner-only permissions (T-10), a killed
+  process leaves no anonymous file (T-11), file names never paths (T-20,
+  T-21), sniffing sees the real bytes (T-22), the token rules (T-23, T-24),
+  hidden content refused (T-25 to T-27), wiping on drop (T-31), and the hook
+  order at every split (T-38).
+
+---
+
 ## [0.3.0] - 2026-10-23
 
 The core: urlencoded and multipart parsing, on parse-net's grammar.
@@ -124,7 +186,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jamesgober/form-net/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/form-net/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jamesgober/form-net/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/form-net/releases/tag/v0.1.0

@@ -1,7 +1,7 @@
 # form-net - API Reference
 
 > Reference for every public item in `form-net`: signature, behaviour, the errors each item can return, cost, and examples.
-> **Current release: `0.3.0` (core).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.4.0` (extended).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -127,13 +127,13 @@ Costs are targets marked **[est.]** until `0.6.0` measures them; `docs/PERFORMAN
 | Feature | Default | Implies | Adds | Dependencies |
 |---|---|---|---|---|
 | (none) | | | the Tier 3 core: `raw_pairs`, `decode_into`, `encode_into`, `Boundary`, `MultipartParser::with_buffer`, `UrlencodedParser::with_buffer`, `Inspector`, `Sink`, `DiscardSink`, `encode_part_head`, `FileName`, `Limits`, `Policy`, every error type; `no_std` without `alloc` | `parse-net` |
-| `alloc` | | | `Form`, `pairs`, `parse_urlencoded*`, `parse_query`, `serialize_urlencoded`, `Serializer`, `parse_multipart*`, `Multipart`, `MultipartParser::new`, `UrlencodedParser::new`, `MemorySink`, `Driver`, typed extraction, `Secret`, `FileData` | |
+| `alloc` | | | `Form`, `pairs`, `parse_urlencoded*`, `parse_query`, `serialize_urlencoded`, `Serializer`, `parse_multipart*`, `Multipart`, `MultipartParser::new`, `UrlencodedParser::new`, `MemorySink`, `Driver`, typed extraction, `Secret`, `FileData` | `crypt-io` (D-083) |
 | `std` | yes | `alloc` | `MultipartReader`, `MultipartWriter::with_boundary`, `FormError::Io`, `FormError::Random` | |
 | `random` | | `std` | `Boundary::generate`, `MultipartWriter::new` | `mod-rand` |
 | `fs` | | `std`, `random` | `read_multipart`, `Store`, `StoredFile`, `Upload`, `UploadSession`, `SpillBudget`, `SpillQuota`, `sweep`, `FileName::sanitized`, `PartReader::save`, `FormError::Store` | `path-lib` |
 | `unicode` | | `alloc` | `FileName::nfc`; `FileName::sanitized` normalizes to NFC first when both are on | `unicode-lang` |
 
-Every dependency is first-party and used at its published version. There is no third-party runtime dependency in any feature combination.
+Every dependency is first-party and used at its published version. The only third-party code is `zeroize` and `subtle`, which `crypt-io` brings under `alloc` for the volatile wipe: the portfolio's audited-cryptography exception (D-083). The allocation-free core depends on `parse-net` alone.
 
 ### Strict by default
 
@@ -1173,7 +1173,7 @@ The client's file name, with views for each way a caller might want it. **form-n
 | `basename` | the bytes after the last `/` or `\` (some non-browser clients send full client paths) |
 | `html_unescape_into`, `html_unescaped` | `%0A`, `%0D`, `%22` decoded to LF, CR, `"`; nothing else. Browsers do not escape `%` itself, so a file the user named `a%22b` reads as `a"b`; that ambiguity is inherent in the HTML encoding |
 | `extension` | the text after the last `.` of the base name when it is 1 to 16 ASCII alphanumeric bytes; a hint that proves nothing about the content |
-| `sanitized` | `html_unescaped` of `basename`, then NFC (with `unicode`), then `path_lib::sanitize`: one portable file name that `path_lib::join` accepts as a single segment, with separators, control and invisible characters, Windows-reserved characters and device names, bidirectional overrides, and trailing dots and spaces made harmless. It is still a name the client chose: never let it overwrite anything (`StoredFile::persist` refuses to) |
+| `sanitized` | `html_unescaped` of `basename`, then NFC (with `unicode`, 0.5), then every Unicode default-ignorable character (zero-width spaces and joiners, soft hyphens, variation selectors, tags, bidirectional controls) replaced by `_` (D-084), then `path_lib::sanitize`: one portable file name that `path_lib::join` accepts as a single segment, with separators, control and invisible characters, Windows-reserved characters and device names, bidirectional overrides, and trailing dots and spaces made harmless. It is still a name the client chose: never let it overwrite anything (`StoredFile::persist` refuses to) |
 | `nfc` | Unicode NFC of `as_str` (macOS clients may send NFD) |
 
 **Errors:** `Encoding { InvalidUtf8 }`; `BufferTooSmall { needed }` from `html_unescape_into`.
@@ -1526,6 +1526,9 @@ impl Refusal {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoInspector;
 impl Inspector for NoInspector {}
+impl<I: Inspector + ?Sized> Inspector for &mut I {}   // D-086: lend an inspector to a call and keep it
+impl<A: Inspector, B: Inspector> Inspector for (A, B) {}   // D-088: both in one pass, A first
+impl<I: Inspector + ?Sized> Inspector for Box<I> {}   // D-088, alloc: a chain chosen at run time
 ```
 
 `Refusal::status` is the HTTP status the inspector wants: `FormError::status_hint` returns it, and a status outside 400 to 599 is reported as 400, because a refusal is never a success. `Refusal::code` is the inspector's stable, machine-readable name for the reason (for example `customs.unexpected_field`), which `FormError::code` returns for a refusal; it must never contain input. `Refusal` ships at 0.3 with `FormError`; inspectors at 0.4.
@@ -1553,7 +1556,7 @@ impl MemorySink {
 }
 ```
 
-Where file parts go. A sink handles one part at a time (multipart is sequential): `open`, any number of `write`, then `close` or `abort`. Drivers call `abort` on every error path (FR-50), and drop the outputs of parts that already closed, which deletes stored files. `abort` must release everything and cannot fail.
+Where file parts go. A sink handles one part at a time (multipart is sequential): `open`, any number of `write`, then `close` or `abort`. The driver opens the sink only after the inspector has accepted the part's head, its sniff window, and the first chunk (or at the end of an empty file), so a refused or skipped part never reaches storage (D-089). Drivers call `abort` on every error path (FR-50), and drop the outputs of parts that already closed, which deletes stored files. `abort` must release everything, cannot fail, and does nothing when no part is open.
 
 A custom sink can send uploads anywhere: to an object store, to a worker pool that does the blocking writes, or through a virus scanner. Budgets are enforced by the driver before `write` is called, so a sink never has to count.
 
@@ -1637,7 +1640,7 @@ impl Store {
     pub fn dir(&self) -> Option<&std::path::Path>;
     pub fn cleanup_failures(&self) -> u64;
     pub fn stats(&self) -> StoreStats;
-    pub fn memory_bound(&self, limits: &Limits) -> u64;
+    pub fn memory_bound(&self, limits: &Limits) -> u64;     // 0.5
     pub fn sink(&self, limits: &Limits) -> StoreSink;
 }
 ```
@@ -1693,7 +1696,7 @@ pub enum SpillMode {
 |---|---|---|
 | Unix | the file is unlinked right after it is created; it lives only while its handle is open | the file keeps its random name until it is dropped or persisted |
 | Windows | opened with delete-on-close and no sharing; removed when its last handle closes, including when the process is killed | readable by the persist step; deleted on drop |
-| after a crash | nothing is left: the operating system frees it | `sweep` at the next start removes leftovers |
+| after a crash | nothing is left: the operating system frees it (on Unix, a crash in the instant between creating the file and unlinking it can leave one `upload-*.part`, which `sweep` also removes) | `sweep` at the next start removes leftovers |
 | `persist` | a copy into the destination | a hard link when the destination is on the same file system, a copy otherwise |
 | `StoredFile::path` | `None` | `Some` |
 
@@ -1767,7 +1770,7 @@ One received file, in memory or in a temporary file.
 - `bytes` is `Some` only while the file is in memory. `reader` works in both cases. It reads with positional reads (`read_at` on Unix, `seek_read` on Windows), so several readers can exist at once without sharing a cursor.
 - `read_to_vec(max)` refuses a file longer than `max` before allocating (`Limit { FileSize }`).
 - `path` is `Some` only in `SpillMode::Named`.
-- `persist` moves the finished upload to `dest`, which the caller built (with `path_lib::join` for a user-facing name, or from its own id). It never overwrites (FR-51): named mode makes a hard link (which fails if `dest` exists) and then removes the temporary name, and copies into `dest` opened with `create_new` when the link fails because `dest` is on another file system; anonymous and memory files are copied the same way. Persisted bytes are released from the store's budget. Whether to fsync `dest` and its directory is the caller's choice; `docs/PLATFORM-NOTES.md` explains when it matters.
+- `persist` moves the finished upload to `dest`, which the caller built (with `path_lib::join` for a user-facing name, or from its own id). It never overwrites (FR-51): named mode makes a hard link (which fails if `dest` exists) and then removes the temporary name, and copies into `dest` opened with `create_new` when the link fails for any reason but an existing `dest` (another file system, a file system without links); anonymous and memory files are copied the same way. A copy that fails part way removes the partial `dest` (D-086). Persisted bytes are released from the store's budget. Whether to fsync `dest` and its directory is the caller's choice; `docs/PLATFORM-NOTES.md` explains when it matters.
 - Dropping a `StoredFile` without `persist` closes its handle first and then removes its name (named mode). Closing first matters on Windows, where an open file cannot be removed, and avoids the bug class of a removed name with a descriptor still open. Memory-held bytes are wiped.
 
 **Errors:** `Io { kind }`; `Store { DestinationExists }` from `persist`; `Limit { FileSize }` from `read_to_vec`.
@@ -1823,7 +1826,7 @@ impl Upload {
 impl core::fmt::Debug for Upload { /* names, lengths, file count; never values */ }
 ```
 
-The result of a completed multipart parse with storage. Text values are owned, checked as text the way `parse_multipart` checks them, and wiped on drop; the text arena grows in 64 KiB doubling steps and never past `max_text_bytes`. Files are `StoredFile`s, deleted on drop unless persisted or taken. `iter` yields text fields `(name, value)` in body order. `take_file` removes and returns the first file with that name. `captured_token` is the token field's value (see [`TokenField`](#tokenfield-tokenplacement)).
+The result of a completed multipart parse with storage. Text values are owned, checked as text the way `parse_multipart` checks them, and wiped on drop; the text arena holds the names and values of the text fields, grows in 64 KiB doubling steps, and is bounded by `max_text_bytes` for the values plus `max_name_bytes` per field for the names. Files are `StoredFile`s, deleted on drop unless persisted or taken. `iter` yields text fields `(name, value)` in body order. `take_file` removes and returns the first file with that name. `captured_token` is the token field's value (see [`TokenField`](#tokenfield-tokenplacement)).
 
 `parse_with` is the blocking loop over a reader with explicit limits, policy, store, and inspector; it reads in 64 KiB chunks.
 
@@ -1960,8 +1963,11 @@ impl<'r, R: std::io::Read> PartReader<'r, R> {
 
 impl<'r, R: std::io::Read> std::io::Read for PartReader<'r, R> {}
 
-pub struct OwnedPartHead { /* copies of the head's views */ }
+pub struct OwnedPartHead { /* copies of the head's views; wiped on drop */ }
 impl OwnedPartHead {
+    pub fn new() -> OwnedPartHead;                          // D-086
+    pub fn with_capacity(capacity: usize) -> OwnedPartHead; // D-086
+    pub fn copy_from(&mut self, head: &PartHead<'_>);       // D-086: reuses the allocation
     pub fn view(&self) -> PartHead<'_>;
 }
 ```
@@ -1969,7 +1975,7 @@ impl OwnedPartHead {
 A pull-style blocking API, synchronous and free of any runtime: ask for the next part, read it like a file, ask for the next.
 
 - The head is copied once per part into an `OwnedPartHead` (the header buffer is reused for the next part, so it cannot be borrowed across reads); `view` gives the usual `PartHead`.
-- `text` reads a text field into a `String`, bounded by `max_value_bytes`, and checks it as text. `skip` discards the rest of the part and returns its length. `save` streams a file part into a store.
+- `text` reads the rest of a part into a `String`, bounded by `max_value_bytes` (for a file part too), and checks it as text. `skip` discards the rest of the part and returns its length. `save` streams a file part into a store.
 - Dropping a `PartReader` before its end skips the rest of the part at the next `next_part` call. `next_part` returns `Ok(None)` after the close delimiter.
 - `Read for PartReader` reports a parse error as `std::io::Error` with kind `InvalidData` and the `FormError` as its source.
 
@@ -2233,7 +2239,7 @@ impl Drop for Secret { /* wipes */ }
 
 For passwords and other secret fields. No `Display`, no `Clone` (a clone is a second copy to wipe), no way to take the `String` out. `expose` is the only way to read it, which makes every read easy to find in review.
 
-**Wiping without `unsafe`.** A volatile write needs `unsafe`, which this crate forbids, so owned values are wiped with `fill(0)` followed by `core::hint::black_box` over the slice, so the compiler cannot prove the store dead. It is best effort: it clears the bytes form-net owns, not copies the allocator or the caller made. The cost is one fill over the used length, about 50 to 100 ns for a 2 KiB form [est.]. `Form`, `Upload`'s text, `Secret`, memory-held `StoredFile` bytes, and the parsers' header and token buffers (on `reset` and drop) are wiped this way.
+**Wiping without `unsafe` in form-net.** With `alloc`, owned values are wiped with crypt-io's `wipe` and `wipe_vec`, volatile writes over the whole allocation including its spare capacity (D-083); the allocation-free core, which owns no allocation, uses `fill(0)` followed by `core::hint::black_box`, which is best effort. Buffers that grow move through a wiping grow, so a reallocation never frees a copy. Either way the wipe clears the bytes form-net owns, not copies the caller made. The cost is one write over the allocation, about 50 to 100 ns for a 2 KiB form [est.]. `Form`, `Upload`'s text and token, `Secret`, `FileData`, `OwnedPartHead`, memory-held `StoredFile` bytes and every file's name, file name, and content type, the driver's text and sniff buffers, the blocking reader's buffers, and the parsers' header and token buffers (on `reset` and drop) are wiped this way, on success and on every error path (D-085).
 
 ### `FileData`
 
@@ -2608,7 +2614,7 @@ form-net is a parser: it holds no state between requests, and the same version g
 | uploads, blocking | `Upload::parse_with`, `read_multipart` |
 | re-render an invalid form with its error | `FormError::Extract { field, .. }` (422) |
 | the response status | `FormError::status_hint` |
-| per-request memory for admission | `Store::memory_bound(&limits)` |
+| per-request memory for admission | `Store::memory_bound(&limits)` (0.5) |
 
 ### customs-sec (body inspection)
 
