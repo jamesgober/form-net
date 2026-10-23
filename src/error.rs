@@ -94,6 +94,14 @@ pub enum FormError {
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     Random,
+    /// Storage refused: the shared budget is full, a path is not a
+    /// directory, or a `persist` destination exists.
+    #[cfg(feature = "fs")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "fs")))]
+    Store {
+        /// What went wrong.
+        reason: crate::store::StoreError,
+    },
     /// A parser was called again after an error, without `reset`.
     Poisoned,
 }
@@ -186,6 +194,11 @@ impl FormError {
             Self::InvalidLimits { .. } | Self::BufferTooSmall { .. } | Self::Poisoned => 500,
             #[cfg(feature = "std")]
             Self::Io { .. } | Self::Random => 500,
+            #[cfg(feature = "fs")]
+            Self::Store { reason } => match reason {
+                crate::store::StoreError::QuotaExceeded => 503,
+                _ => 500,
+            },
         }
     }
 
@@ -219,6 +232,8 @@ impl FormError {
             Self::Io { .. } => "io",
             #[cfg(feature = "std")]
             Self::Random => "random",
+            #[cfg(feature = "fs")]
+            Self::Store { reason } => reason.code(),
             Self::Poisoned => "poisoned",
         }
     }
@@ -279,6 +294,8 @@ impl fmt::Display for FormError {
             Self::Random => f.write_str(
                 "the operating system's random source failed; no predictable fallback is used",
             ),
+            #[cfg(feature = "fs")]
+            Self::Store { reason } => write!(f, "storage: {}", reason.describe()),
             Self::Poisoned => {
                 f.write_str("parser used after an error; call reset before parsing again")
             }

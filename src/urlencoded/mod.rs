@@ -19,6 +19,7 @@ mod owned {
 
     #[derive(Clone, Copy)]
     struct Span {
+        offset: u64,
         name_start: usize,
         name_len: usize,
         value_start: usize,
@@ -212,7 +213,7 @@ mod owned {
 
     impl Drop for Form {
         fn drop(&mut self) {
-            crate::wipe::wipe(&mut self.arena);
+            crate::wipe::wipe_vec(&mut self.arena);
         }
     }
 
@@ -279,6 +280,7 @@ mod owned {
                 .map_err(|e| e.shifted(value_at))?;
             *used = value_start.saturating_add(value_len);
             spans.push(Span {
+                offset: pair.offset(),
                 name_start,
                 name_len,
                 value_start,
@@ -366,6 +368,69 @@ mod owned {
     ) -> Result<Form, FormError> {
         limits.validate()?;
         build(input, limits, policy.percent)
+    }
+
+    /// As [`parse_urlencoded_with`], calling `inspector.field(name, value)`
+    /// for every pair in input order (decoded value bytes), then
+    /// `inspector.end()`. On any error, including a refusal,
+    /// `inspector.failed(&error)` is called once before the error is
+    /// returned. A `Verdict::Skip` from `field` drops that pair. Inspection
+    /// never runs on a body form-net refuses.
+    ///
+    /// # Errors
+    ///
+    /// As [`parse_urlencoded_with`]; `Refused`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Inspector, Limits, Policy, Refusal, Verdict};
+    ///
+    /// struct NoAdmins;
+    /// impl Inspector for NoAdmins {
+    ///     fn field(&mut self, name: &str, value: &[u8]) -> Verdict {
+    ///         if name == "role" && value == b"admin" {
+    ///             Verdict::Refuse(Refusal::new(422, "example.role_not_allowed"))
+    ///         } else {
+    ///             Verdict::Continue
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// let err = form_net::parse_urlencoded_inspected(b"role=admin", &Limits::DEFAULT, &Policy::DEFAULT, &mut NoAdmins)
+    ///     .unwrap_err();
+    /// assert_eq!(err.status_hint(), 422);
+    /// ```
+    pub fn parse_urlencoded_inspected<I: crate::Inspector>(
+        input: &[u8],
+        limits: &Limits,
+        policy: &Policy,
+        inspector: &mut I,
+    ) -> Result<Form, FormError> {
+        let result = parse_urlencoded_with(input, limits, policy).and_then(|mut form| {
+            let mut keep = Vec::with_capacity(form.spans.len());
+            for s in &form.spans {
+                let at = crate::error::Location::at(s.offset);
+                match inspector.field(form.name_of(s), form.value_of(s).as_bytes()) {
+                    crate::Verdict::Refuse(refusal) => {
+                        return Err(FormError::Refused { refusal, at });
+                    }
+                    crate::Verdict::Skip => keep.push(false),
+                    _ => keep.push(true),
+                }
+            }
+            let mut flags = keep.into_iter();
+            form.spans.retain(|_| flags.next().unwrap_or(false));
+            if let crate::Verdict::Refuse(refusal) = inspector.end() {
+                let at = crate::error::Location::at(input.len() as u64);
+                return Err(FormError::Refused { refusal, at });
+            }
+            Ok(form)
+        });
+        if let Err(e) = &result {
+            inspector.failed(e);
+        }
+        result
     }
 
     /// Iterates the fields of a urlencoded body lazily, with the default
@@ -523,4 +588,7 @@ mod owned {
 }
 
 #[cfg(feature = "alloc")]
-pub use owned::{Form, Pairs, pairs, parse_query, parse_urlencoded, parse_urlencoded_with};
+pub use owned::{
+    Form, Pairs, pairs, parse_query, parse_urlencoded, parse_urlencoded_inspected,
+    parse_urlencoded_with,
+};

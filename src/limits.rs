@@ -317,6 +317,11 @@ impl Limits {
         min_u64(self.max_file_bytes, self.body())
     }
 
+    #[cfg(feature = "alloc")]
+    pub(crate) const fn sniff(&self) -> u32 {
+        min_u64(self.sniff_bytes as u64, self.file()) as u32
+    }
+
     pub(crate) const fn filename(&self) -> u32 {
         min_u64(
             self.max_filename_bytes as u64,

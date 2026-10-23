@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "form-net"
-version = "0.3.0"
+version = "0.4.0"
 
 # Minimum Supported Rust Version (MSRV)
 rust-version = "1.85"
@@ -49,11 +49,18 @@ path = "src/lib.rs"
 [features]
 default = ["std"]
 
-# Owned results, Tier 1 parsing, the multipart parser's own buffer.
-alloc = []
+# Owned results, Tier 1 parsing, typed extraction, the hook driver.
+# Owned values are wiped through crypt-io (volatile writes, D-083).
+alloc = ["dep:crypt-io"]
 
 # std::io adapters and FormError::Io; implies alloc.
 std = ["alloc"]
+
+# The OS random source, for temporary names and generated boundaries.
+random = ["std", "dep:mod-rand"]
+
+# Upload storage: private temporary files, StoredFile, Upload, UploadSession.
+fs = ["std", "random", "dep:path-lib"]
 
 
 # DEPENDENCIES
@@ -62,6 +69,17 @@ std = ["alloc"]
 # First-party grammar for media types, parameters, Content-Disposition, and
 # RFC 8187 values (dev/PLAN.md D-006). no_std, no allocation.
 parse-net = { version = "0.6.1", default-features = false }
+
+# First-party: volatile wiping of owned values (the audited-cryptography
+# exception of the portfolio standard; pulls zeroize and subtle, D-083).
+crypt-io = { version = "1.2.1", default-features = false, features = ["zeroize"], optional = true }
+
+# First-party: the OS CSPRNG (tier3::fill_bytes) for random names.
+mod-rand = { version = "1", default-features = false, features = ["tier3"], optional = true }
+
+# First-party: path_lib::sanitize for FileName::sanitized.
+path-lib = { version = "1", optional = true }
+
 
 
 # DEV DEPENDENCIES
@@ -97,3 +115,23 @@ lto           = "fat"
 codegen-units = 1
 panic         = "abort"
 strip         = "symbols"
+
+[[example]]
+name = "typed_form"
+required-features = ["alloc"]
+
+[[example]]
+name = "content_inspector"
+required-features = ["alloc"]
+
+[[example]]
+name = "upload_to_disk"
+required-features = ["fs"]
+
+[[example]]
+name = "upload_session_push"
+required-features = ["fs"]
+
+[[example]]
+name = "token_first"
+required-features = ["fs"]
