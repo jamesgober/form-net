@@ -1,7 +1,7 @@
 # form-net - API Reference
 
 > Reference for every public item in `form-net`: signature, behaviour, the errors each item can return, cost, and examples.
-> **Current release: `0.2.0` (design lock).** This document is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.3.0` (core).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -724,7 +724,7 @@ pub fn parse_multipart<'a>(content_type: &[u8], body: &'a [u8]) -> Result<Multip
 
 Detects the boundary, parses the whole body with `Limits::DEFAULT` and `Policy::DEFAULT`, and returns the parts. Part data borrows the body (zero copy); a part's bytes are the exact slice between its blank line and the CRLF before the next delimiter. Names borrow too, except where an HTML escape (`%22`, `%0D`, `%0A`) had to be decoded, which costs one small owned copy for that name.
 
-Text fields are checked as text at parse time: a text field that is not valid UTF-8, or whose charset (its own, else the `_charset_` field before it, else UTF-8) is not UTF-8 or US-ASCII, refuses the body. That is why `Multipart::field` can return a plain `Option<&str>` without hiding an error. Callers who must accept other charsets use the Tier 3 parser, which hands out bytes.
+Text fields are checked as text at parse time (a US-ASCII label is read as UTF-8, of which it is a subset): a text field that is not valid UTF-8, or whose charset (its own, else the `_charset_` field before it, else UTF-8) is not UTF-8 or US-ASCII, refuses the body. That is why `Multipart::field` can return a plain `Option<&str>` without hiding an error. Callers who must accept other charsets use the Tier 3 parser, which hands out bytes.
 
 **Errors:** every multipart error in [Every error](#every-error-and-what-to-do); `UnsupportedMediaType` when the content type is not `multipart/form-data`.
 
@@ -781,6 +781,7 @@ impl<'a> Part<'a> {
     pub fn bytes(&self) -> &'a [u8];
     pub fn text(&self) -> Result<&'a str, FormError>;
     pub fn len(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
 }
 ```
 
@@ -872,7 +873,7 @@ The framing rules (RFC 2046 section 5.1.1 and RFC 7578), with form-net's strict 
 | after the close delimiter | at most `max_epilogue_bytes` more, counted in constant time per chunk and discarded |
 | end of input before the close delimiter | `Truncated` |
 | part headers | `name ":" OWS value OWS CRLF`; no whitespace before the colon, no folding, no control bytes except HTAB; bytes 0x80 to 0xFF allowed in values (browsers send raw UTF-8 file names) |
-| `Content-Disposition` | exactly once; type `form-data`; `name` exactly once and not empty; `filename` at most once; no repeated parameter; unknown parameters ignored; a quoted value containing `\"` refused (browsers never backslash-escape, so the RFC 9110 and HTML readings disagree only there) |
+| `Content-Disposition` | exactly once; type `form-data`; `name` exactly once and not empty; `filename` at most once; no repeated parameter; unknown parameters ignored, except that a parameter name with `*` other than `filename*` (RFC 2231 continuations, `name*`) and a backslash in `name` are refused as `MalformedParameter`; at most 16 parameters (more is `MalformedParameter`); a quoted value containing `\"` refused (browsers never backslash-escape, so the RFC 9110 and HTML readings disagree only there) |
 | `filename*` | refused by default; see [`ExtendedFilenamePolicy`](#extendedfilenamepolicy) |
 | part `Content-Type` | at most once; parsed; `multipart/*` refused (no nested multipart) |
 | `Content-Transfer-Encoding` | absent, `7bit`, `8bit`, or `binary` (any case); anything else refused |
@@ -963,7 +964,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
 
 **Errors:** every multipart variant in [Every error](#every-error-and-what-to-do); `InvalidLimits` and `BufferTooSmall { needed }` from the constructors; `Poisoned` after any error until `reset`.
 
-**Cost:** no allocation after construction (FR-43; `with_buffer` never allocates at all); at least 3 GB/s on large file parts in 64 KiB chunks, under 1 µs for a 1 KiB body of three text fields [est.]; the struct is at most 256 bytes plus its buffer (NFR-18). `Send` when `B: Send`.
+**Cost:** no allocation after construction (FR-43; `with_buffer` never allocates at all); at least 3 GB/s on large file parts in 64 KiB chunks, under 1 µs for a 1 KiB body of three text fields [est.]; the struct is 384 bytes plus its buffer on 64-bit targets, 149 of them the boundary and its matcher table (NFR-18, measured). `Send` when `B: Send`.
 
 ```rust
 use form_net::{Event, FormKind, MultipartParser, Policy, Limits};
@@ -1269,7 +1270,7 @@ Every budget is checked **before** the bytes it governs are buffered, stored, or
 | `sniff_bytes` | 0 (off) | the sniff window per file part | at construction (buffer size) |
 | `max_token_bytes` | 128 | the captured anti-forgery token (csrf-sec tokens are 59 characters, one-time tokens 102) | at capture |
 
-**Containing limits cap contained ones**, so a route sets only the limits it cares about: the effective value of a limit is never more than the limit that contains it. `max_file_bytes`, `max_text_bytes`, `max_preamble_bytes`, and `max_epilogue_bytes` are capped by `max_body_bytes`; `max_value_bytes` by `max_text_bytes`; `max_name_bytes` and `max_token_bytes` by `max_value_bytes`; `sniff_bytes` by `max_file_bytes`; `max_filename_bytes` by `max_part_header_bytes`. `Limits::DEFAULT.with_max_body_bytes(4096)` is a complete, consistent configuration for a small form. Every check and every size (buffers, `memory_bound`) uses the effective values.
+**Containing limits cap contained ones**, so a route sets only the limits it cares about: the effective value of a limit is never more than the limit that contains it. `max_file_bytes`, `max_text_bytes`, `max_preamble_bytes`, and `max_epilogue_bytes` are capped by `max_body_bytes`; `max_value_bytes` by `max_text_bytes`; `max_name_bytes` by `max_body_bytes`; `max_token_bytes` by `max_value_bytes`; `sniff_bytes` by `max_file_bytes`; `max_filename_bytes` by `max_part_header_bytes`. `Limits::DEFAULT.with_max_body_bytes(4096)` is a complete, consistent configuration for a small form. Every check and every size (buffers, `memory_bound`) uses the effective values.
 
 `validate` refuses only what no body could satisfy, so a misconfiguration is found at startup, not under attack (FR-39): `max_part_header_bytes` below 64 (the shortest useful `Content-Disposition` line must fit), and buffer sizes that do not fit in `usize` on the target. With a token field set, the policy is checked too: an effective `max_token_bytes` of 0 is refused. Every parser constructor and every `*_with` function calls it.
 
@@ -2570,7 +2571,7 @@ Checked at compile time by static assertions in the test suite (NFR-11).
 | Value | Size (64-bit) [est.] |
 |---|---|
 | `Boundary` | 149 bytes |
-| `MultipartParser<B>` | at most 256 bytes plus its buffer (asserted by a test, NFR-18) |
+| `MultipartParser<B>` | 384 bytes plus its buffer (measured; asserted by a test, NFR-18) |
 | `FormError` | at most 48 bytes |
 | `Limits` | 72 bytes |
 | `RawPair` | 48 bytes |
@@ -2598,6 +2599,7 @@ form-net is a parser: it holds no state between requests, and the same version g
 
 | Need | form-net |
 |---|---|
+| request accessors as short as PHP's `$_GET` / `$_POST` / `$_FILES`: `req.get("q")`, `req.post("email")`, `req.file("avatar")`, parsed once on first access and cached for the request | `parse_query`, `FromForm::from_body` / `parse_multipart_with` or `UploadSession` underneath; web-net owns the request, so it owns the cache |
 | decide the body format from `Content-Type` | `FormKind::detect` |
 | a typed form in one line, either encoding | `form!` + `FromForm::from_body` |
 | a typed form with the route's limits and customs-sec in the same pass | `FromForm::from_body_inspected(ct, body, &route.limits, &route.policy, &mut customs)` |

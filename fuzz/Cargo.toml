@@ -1,0 +1,74 @@
+[package]
+name = "form-net-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.form-net]
+path = ".."
+
+# Keeps this crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_detect"
+path = "fuzz_targets/fuzz_detect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_raw_pairs"
+path = "fuzz_targets/fuzz_raw_pairs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_decode"
+path = "fuzz_targets/fuzz_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_boundary"
+path = "fuzz_targets/fuzz_boundary.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_multipart"
+path = "fuzz_targets/fuzz_multipart.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_multipart_differential"
+path = "fuzz_targets/fuzz_multipart_differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_part_headers"
+path = "fuzz_targets/fuzz_part_headers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_filename"
+path = "fuzz_targets/fuzz_filename.rs"
+test = false
+doc = false
+bench = false

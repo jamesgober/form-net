@@ -27,20 +27,20 @@ Exit: James approves `docs/API.md`; every open decision is decided or dated.
 - [x] README updated: scope, planned API, status; the `&mdash;` entities replaced.
 - [x] James approves `docs/API.md` (2026-10-23, with the go-ahead to release).
 
-## v0.3.0 - Core
+## v0.3.0 - Core (DONE, 2026-10-23)
 
 Exit: everything below green on the full CI matrix, including the bare-metal `no_std` build; clippy's panic lints on (`unwrap_used`, `expect_used`, `panic`, `indexing_slicing`, `arithmetic_side_effects`) with no exception in `src/`.
 
-- [ ] Wire parse-net (`version = "0.6"`, `default-features = false`); features `alloc`, `std` (default); `#![no_std]` crate root.
-- [ ] Errors and configuration: #18, #24, #26 to #31, #57, #58, #65, #72, #73.
-- [ ] Detection: #2.
-- [ ] urlencoded: #3 to #7, #32, #41, #44 to #46.
-- [ ] multipart: #8, #9, #33, #48 to #51, #69; file name views #19, #20.
-- [ ] Tests: unit tests on every path; WHATWG urlencoded cases and RFC 7578 / RFC 2046 examples as data, whole and split at every byte; property tests (no panic, split invariance, budgets hold, serializer round trip); counting-allocator tests for every no-allocation claim; the reference-parser differential; attack tests for T-1 to T-6, T-12 to T-14, T-16, T-17, T-19, T-28, T-30, T-32, T-36, T-37; parser size assertion (NFR-18); static `Send`/`Sync` assertions.
-- [ ] Fuzz targets `fuzz_detect`, `fuzz_raw_pairs`, `fuzz_decode`, `fuzz_boundary`, `fuzz_multipart`, `fuzz_multipart_differential`, `fuzz_part_headers`, `fuzz_filename`, each run in CI for 60 seconds.
-- [ ] CI: `no_std` job (`thumbv7em-none-eabihf`, `--no-default-features`), fuzz smoke job, docs in both feature modes.
-- [ ] Defence idea recorded and measured: state-2 priming (PLAN 14).
-- [ ] Examples: `urlencoded_basic`, `query_string`, `multipart_buffered`, `multipart_sans_io`, `no_std_core`.
+- [x] Wire parse-net (`version = "0.6"`, `default-features = false`); features `alloc`, `std` (default); `#![no_std]` crate root.
+- [x] Errors and configuration: #18, #24, #26 to #31, #57, #58, #65, #72, #73.
+- [x] Detection: #2.
+- [x] urlencoded: #3 to #7, #32, #41, #44 to #46.
+- [x] multipart: #8, #9, #33, #48 to #51, #69; file name views #19, #20.
+- [x] Tests: unit tests on every path; WHATWG urlencoded cases and RFC 7578 / RFC 2046 examples as data, whole and split at every byte; property tests (no panic, split invariance, budgets hold, serializer round trip); counting-allocator tests for every no-allocation claim; the reference-parser differential; attack tests for T-1 to T-6, T-12 to T-14, T-16, T-17, T-19, T-28, T-30, T-32, T-36, T-37; parser size assertion (NFR-18); static `Send`/`Sync` assertions.
+- [x] Fuzz targets `fuzz_detect`, `fuzz_raw_pairs`, `fuzz_decode`, `fuzz_boundary`, `fuzz_multipart`, `fuzz_multipart_differential`, `fuzz_part_headers`, `fuzz_filename`, each run in CI for 60 seconds.
+- [x] CI: `no_std` job (`thumbv7em-none-eabihf`, `--no-default-features`), fuzz smoke job, docs in both feature modes.
+- [x] Defence idea recorded and measured: state-2 priming (PLAN 14).
+- [x] Examples: `urlencoded_basic`, `query_string`, `multipart_buffered`, `multipart_sans_io`, `no_std_core`.
 
 ## v0.4.0 - Extended
 

@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>#![forbid(unsafe_code)]</code>. No third-party dependencies.
     </p>
     <blockquote>
-        <strong>Status: design lock (<code>0.2.0</code>).</strong> The public API is written down item by item in <a href="./docs/API.md"><code>docs/API.md</code></a>; the parsers arrive in <code>0.3.0</code>, storage and typed extraction in <code>0.4.0</code>. The schedule is in <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: core (<code>0.3.0</code>).</strong> urlencoded parsing and serializing, form detection, and the streaming and buffered multipart parsers are in. Upload storage, inspection hooks, and typed extraction arrive in <code>0.4.0</code>. The contract is <a href="./docs/API.md"><code>docs/API.md</code></a>; the schedule is <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -65,10 +65,10 @@ The plan for 1.0. Each item names the version that ships it.
 
 ```toml
 [dependencies]
-form-net = "0.2"
+form-net = "0.3"
 ```
 
-`0.2.0` contains the API document and no parsing code; use `0.3` or later to parse forms.
+Without default features the crate is `no_std` and needs no allocator: the allocation-free core (`raw_pairs`, `decode_into`, `MultipartParser::with_buffer`) works on any target. Add `features = ["alloc"]` for the owned results.
 
 ---
 
@@ -76,7 +76,7 @@ form-net = "0.2"
 
 ## Quick start
 
-The API below is fixed by the design lock and ships in the versions shown.
+The API below is fixed by the design lock; the 0.3 parts work today, the 0.4 parts arrive next.
 
 ```rust
 use form_net as fnet;

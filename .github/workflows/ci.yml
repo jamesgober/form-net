@@ -41,14 +41,108 @@ jobs:
         run: cargo test
       - name: Test (all features)
         run: cargo test --all-features
+      # The doc examples use the owned results, so the allocation-free
+      # build runs the unit and integration tests only.
       - name: Test (no default features)
-        run: cargo test --no-default-features
+        run: cargo test --no-default-features --lib --tests
       - name: Build examples
         run: cargo build --examples
+      # Both modes: a doc link to a feature-gated item breaks only when that
+      # feature is off.
+      - name: Doc (default features)
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
       - name: Doc (all features)
         run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  no-std:
+    name: Bare metal (thumbv7em-none-eabihf / ${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [stable, "1.85"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: thumbv7em-none-eabihf
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: thumbv7em
+      # A target with no std at all proves the core never reaches for it
+      # (NFR-3); alloc builds there too.
+      - name: Build (no features)
+        run: cargo build --target thumbv7em-none-eabihf --no-default-features
+      - name: Build (alloc)
+        run: cargo build --target thumbv7em-none-eabihf --no-default-features --features alloc
+      - name: Clippy (no features)
+        run: cargo clippy --target thumbv7em-none-eabihf --no-default-features -- -D warnings
+
+  dependencies:
+    name: No third-party runtime dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Only first-party crates in every feature mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          # NFR-1: the runtime tree holds form-net and first-party crates only.
+          allowed='^(form-net|parse-net)$'
+          for flags in "" "--all-features" "--no-default-features"; do
+            names=$(cargo tree -e normal --prefix none $flags | awk '{print $1}' | sort -u)
+            bad=$(printf '%s\n' "$names" | grep -Ev "$allowed" || true)
+            if [ -n "$bad" ]; then
+              echo "third-party runtime dependencies with '$flags':"
+              printf '%s\n' "$bad"
+              exit 1
+            fi
+            printf '%s: %s\n' "${flags:-default}" "$(printf '%s ' $names)"
+          done
+
+  fuzz:
+    name: Fuzz (60 s per target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Run every target
+        working-directory: fuzz
+        shell: bash
+        env:
+          RUSTFLAGS: ""
+        run: |
+          set -euo pipefail
+          for t in $(cargo fuzz list); do
+            echo "== $t"
+            # The prebuilt cargo-fuzz defaults to its own (musl) target,
+            # where the sanitizers cannot link; name the glibc target.
+            cargo fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=60 -rss_limit_mb=2048
+          done
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Package
+        run: cargo package
 
   security:
     name: Security (audit + deny)

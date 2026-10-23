@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "form-net"
-version = "0.2.0"
+version = "0.3.0"
 
 # Minimum Supported Rust Version (MSRV)
 rust-version = "1.85"
@@ -32,6 +32,9 @@ documentation = "https://docs.rs/form-net"
 # Authors
 authors = ["James Gober <me@jamesgober.com>"]
 
+# The fuzz crate is its own workspace and never ships.
+exclude = ["/fuzz/"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
@@ -44,19 +47,46 @@ path = "src/lib.rs"
 # FEATURE FLAGS
 # #################################
 [features]
-default = []
+default = ["std"]
+
+# Owned results, Tier 1 parsing, the multipart parser's own buffer.
+alloc = []
+
+# std::io adapters and FormError::Io; implies alloc.
+std = ["alloc"]
 
 
 # DEPENDENCIES
 # #################################
 [dependencies]
-# None yet. Planned dependencies and the reason for each are listed in
-# dev/PLAN.md; each is added with the first code that needs it.
+# First-party grammar for media types, parameters, Content-Disposition, and
+# RFC 8187 values (dev/PLAN.md D-006). no_std, no allocation.
+parse-net = { version = "0.6.1", default-features = false }
 
 
 # DEV DEPENDENCIES
 # #################################
 [dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+
+# EXAMPLES
+# #################################
+[[example]]
+name = "urlencoded_basic"
+required-features = ["alloc"]
+
+[[example]]
+name = "query_string"
+required-features = ["alloc"]
+
+[[example]]
+name = "multipart_buffered"
+required-features = ["alloc"]
+
+[[example]]
+name = "multipart_sans_io"
+required-features = ["alloc"]
 
 
 # RELEASE PROFILE
