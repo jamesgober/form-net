@@ -15,7 +15,7 @@ Exit: CI green on every platform.
 - [x] `dev/PLAN.md`, `dev/DIRECTIVES.md`, this file; README, CHANGELOG, `docs/API.md`, `docs/release/v0.1.0.md`.
 - Not published to crates.io; the name is claimed by 0.2.0 (D-005).
 
-## v0.2.0 - Design lock
+## v0.2.0 - Design lock (DONE, 2026-10-23)
 
 Exit: James approves `docs/API.md`; every open decision is decided or dated.
 
@@ -25,7 +25,7 @@ Exit: James approves `docs/API.md`; every open decision is decided or dated.
 - [x] This file rewritten to the full 0.1 to 1.0 series (D-035).
 - [x] parse-net's API checked against form-net's needs: media types, parameters, `Quoted::raw`, `Content-Disposition`, RFC 8187 values are all in parse-net 0.6.1 (D-006).
 - [x] README updated: scope, planned API, status; the `&mdash;` entities replaced.
-- [ ] James approves `docs/API.md`.
+- [x] James approves `docs/API.md` (2026-10-23, with the go-ahead to release).
 
 ## v0.3.0 - Core
 
