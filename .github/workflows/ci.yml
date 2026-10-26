@@ -162,7 +162,12 @@ jobs:
         with:
           tool: cargo-audit,cargo-deny
       - name: Generate lockfile
+        # Audit the newest versions a user can resolve, not the 1.85-capped
+        # ones: the lockfile also lists optional dependencies of crypt-io
+        # that form-net never compiles (ctutils, D-091).
         run: cargo generate-lockfile
+        env:
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: allow
       - name: Audit
         run: cargo audit
       - name: Deny
