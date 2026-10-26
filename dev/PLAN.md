@@ -91,9 +91,10 @@ form-net decides whether the bytes are a well-formed form. customs-sec decides w
 | `parse-net` | 0.6 (published) | media type and parameter grammar, quoted strings (read with `Quoted::raw`), `Content-Disposition`, RFC 8187 values | always, `default-features = false` (`no_std`, no `alloc`) |
 | `path-lib` | 1.0 (published) | `path_lib::sanitize` for `FileName::sanitized` | `fs` |
 | `mod-rand` | 1.0 (published) | `tier3::fill_bytes` (OS CSPRNG) for temporary names and generated boundaries | `random` (implied by `fs`) |
+| `crypt-io` | 1.2 (published) | `wipe` and `wipe_vec`, volatile zeroing of owned values (D-083); brings `zeroize` and `subtle`, the audited-cryptography exception | `alloc` |
 | `unicode-lang` | 1.0 (published) | `normalize(.., Form::Nfc)` for `FileName::nfc` | `unicode` |
 
-Each is first-party, has no third-party runtime dependency in the features form-net enables, and is wired in the version whose code first uses it (parse-net at 0.3, path-lib and mod-rand at 0.4, unicode-lang at 0.5).
+Each is first-party, has no third-party runtime dependency in the features form-net enables (crypt-io's `zeroize` and `subtle` are the audited-cryptography exception, D-083), and is wired in the version whose code first uses it (parse-net at 0.3, path-lib and mod-rand at 0.4, unicode-lang at 0.5).
 
 ### 2.3 Load and capacity
 
@@ -182,7 +183,7 @@ Parsing is CPU-light and bounded. Spilling to disk is blocking file I/O: an even
 
 | Id | Requirement |
 |---|---|
-| NFR-1 | No third-party runtime dependency in any feature combination; first-party crates by published version only |
+| NFR-1 | No third-party runtime dependency in any feature combination, except the audited cryptography crypt-io brings (`zeroize`, `subtle`; D-083); first-party crates by published version only |
 | NFR-2 | `#![forbid(unsafe_code)]`, no exception (SWAR in safe Rust, no SIMD intrinsics) |
 | NFR-3 | The Tier 3 core builds with `--no-default-features` on a `no_std` target without `alloc` |
 | NFR-4 | No panic on any input: no `unwrap`, `expect`, failing index, or overflowing arithmetic on input-derived values |
@@ -369,7 +370,7 @@ Poisoned: any call ─▶ Poisoned (until reset)
 
 ### 7.5 Sniff window and hook order
 
-Drivers with `sniff_bytes > 0` hold back the first `sniff_bytes` of each file part in a buffer allocated once, until it is full or the part ends, call `Inspector::sniff`, and only then pass those bytes to `Inspector::data` and the sink. The window is contiguous however the input was split. For buffered bodies it is a slice of the body. Order per part: `part_start`, `sniff` (file parts, when enabled), `data`*, `field` (text parts), `part_end`; then `end`; `failed` once on any error.
+Drivers with `sniff_bytes > 0` hold back the first `sniff_bytes` of each file part in a buffer allocated once, until it is full or the part ends, call `Inspector::sniff`, and only then pass those bytes to `Inspector::data` and the sink. The window is contiguous however the input was split. For buffered bodies it is a slice of the body. Order per part: `part_start`, `sniff` (file parts, when enabled), `data`*, `field` (text parts), `part_end`; then `end`; `failed` once on any error. The driver opens the sink on the first byte the inspector has accepted, or at the end of an empty file, so a refused or skipped part makes no sink call at all (D-089).
 
 ### 7.6 Typed extraction
 
@@ -385,7 +386,7 @@ One `Copy` error enum with `#[non_exhaustive]` reason enums; every input error c
 
 ### 7.9 Wiping
 
-Owned values that may hold secrets (the `Form` arena, `Upload` text, `Secret`, memory-held `StoredFile` bytes, the parsers' header and token buffers on `reset` and drop) are overwritten with zeros: `slice.fill(0)` then `core::hint::black_box(&slice)`. Without `unsafe` there is no volatile write, so this is best effort (D-028); the cost is one fill over the used length, about 50 to 100 ns for a 2 KiB form [est.].
+Owned values that may hold secrets (the `Form` arena, `Upload` text and token, `Secret`, `FileData`, `OwnedPartHead`, memory-held `StoredFile` bytes and every file's name, file name, and content type, the parsers' header and token buffers on `reset` and drop) are overwritten with zeros. With `alloc` this is crypt-io's `wipe` and `wipe_vec`, volatile writes over the whole allocation including spare capacity (D-083); the allocation-free core, which owns only the caller's buffer, uses `fill(0)` plus `core::hint::black_box`, best effort (D-028). Growing buffers move through `append_wiping`, which wipes the old allocation after each move, so a reallocation leaves no copy. The cost is one write over the allocation, about 50 to 100 ns for a 2 KiB form [est.]. A test-only counter proves that every owned value sends all its bytes through the wipe on drop (D-085).
 
 ---
 
@@ -460,7 +461,7 @@ Costs are per request unless stated; [est.] until measured at 0.6. Every threat 
 | T-18 | nested bracket names (Node multer CVE-2026-5079, CVE-2026-82333, CVE-2026-77078) | names opaque; `NamePath` (after 1.0) checks depth and index while scanning | `a[1000000000][x]=1`: no work | none |
 | T-19 | invalid encodings smuggling bytes | strict percent and UTF-8; never replace | `%C0%AF`, `%ED%A0%80`, `%`, `%4`, `%zz`: refused | none |
 | T-20 | file name traversal, absolute, UNC, streams, device names | names never paths; random spill names; `sanitized`; `persist` never overwrites | `../../etc/passwd`, `C:\Windows\x`, `\\host\share\x`, `a.txt:stream`, `CON`, `NUL.txt` | about 100 ns when `sanitized` is called |
-| T-21 | file name Unicode tricks (RLO, NFD, invisibles) | path-lib replaces invisible and bidirectional characters; NFC | `"gpj\u{202E}.exe"`, NFD input: neither in `sanitized` | only when called |
+| T-21 | file name Unicode tricks (RLO, NFD, invisibles) | `sanitized` replaces every default-ignorable character (D-084), path-lib the rest; NFC with `unicode` (0.5) | `"gpj\u{202E}.exe"`, NFD input: neither in `sanitized` | only when called |
 | T-22 | content type spoofing | declared type is a hint; sniff window for customs-sec | a `.png` part whose bytes are `<html>`: the inspector receives the real first bytes | one copy of up to `sniff_bytes` per file |
 | T-23 | uploads stored before the token is checked | `TokenField` with `BeforeFirstFile` | token after the file: refused before `Sink::open` | about 10 ns per text field name |
 | T-24 | two token fields | `DuplicateToken` | refused | none |
@@ -470,14 +471,14 @@ Costs are per request unless stated; [est.] until measured at 0.6. Every threat 
 | T-28 | counter overflow | `u64`, checked arithmetic | lengths near `u64::MAX` through a test counter seam | none |
 | T-29 | panic on crafted input (release builds abort) | no panicking constructs; fuzzing | every fuzz target 24 hours clean before 0.7 exits | none |
 | T-30 | secrets in logs | errors hold no values; `Debug` redacts | format every error and container; no value bytes appear | none |
-| T-31 | secret residue in freed memory | wipe on drop (best effort) | test reads the arena through a test-only hook after the wipe | 50 to 100 ns per 2 KiB form |
+| T-31 | secret residue in freed memory | volatile wipe on drop (D-083) | a test-only counter shows every owned value wipes all its bytes on drop (D-085) | 50 to 100 ns per 2 KiB form |
 | T-32 | split-dependent results | split invariance as a property | every split of every corpus body gives identical events | none |
 | T-33 | memory exhaustion through many concurrent uploads | `memory_bound` for admission; bounded buffers | 1,000 concurrent parses: peak within 1,000 × `memory_bound` | none |
 | T-34 | header injection in built requests | writer escapes LF, CR, `"`; refuses other controls; content types validated | names with CR LF and quotes re-parse to the same name; no extra header | about 10 ns per part |
 | T-35 | boundary collision in client bodies | 128-bit generated boundaries; caller boundaries scanned | data with the delimiter under a caller boundary: refused | 0.1 to 0.3 ns per byte |
 | T-36 | quoted-pair ambiguity in `filename` | backslash literal, `\"` refused | `filename="a\"; name="x"`: refused | none |
 | T-37 | empty or missing names | `EmptyName`, `MissingName` | `name=""`: refused | none |
-| T-38 | inspector bypass through ordering | drivers call `part_start` and `sniff` before any sink write | a recording sink asserts no write precedes them, at every split | none |
+| T-38 | inspector bypass through ordering | drivers call `part_start`, `sniff`, and the first `data` before any sink call (D-089) | a recording sink asserts no write precedes them, at every split | none |
 
 Out of scope, named so nobody assumes otherwise: decompression bombs (HTTP layer, customs-sec), slow uploads (serve-net, net-io), malware in files and image parser exploits (the application, in a sandbox), cross-site scripting through a reflected file name (the render layer's escaping).
 
@@ -566,7 +567,7 @@ At least one new defence idea per version (hypothesis, method, expected cost):
 |---|---|---|---|
 | 0.2 | A work budget (bytes the matcher examines, from the same counter the T-4 test uses) could refuse a pathological body by work done rather than by size, so a body that is legal in size but expensive in shape is cut short. | At 0.6, measure examined bytes per body byte on the corpus and on the adversarial inputs; if adversarial bodies are at least 4 times the corpus and the corpus stays under 1.2, add a `max_work_factor` limit. | one add per matcher step, about 0.1 ns per byte [est.] |
 | 0.3 | Priming the matcher at state 2 removes a whole branch of first-delimiter special cases, and their bugs. | Done at 0.3: the parser starts in state 2 as if CRLF had been seen, so a body that begins with `--boundary` and one with a preamble take the same path; there is no first-delimiter branch to cover, and the split, fuzz, and reference tests found no difference between the two shapes. | none |
-| 0.4 | Verifying the token before the first file stops forged uploads from costing disk. | `TokenField` and its attack test. | about 10 ns |
+| 0.4 | Verifying the token before the first file stops forged uploads from costing disk. | Done at 0.4: `TokenField` with `BeforeFirstFile` refuses a file part that comes before the token at its first header, before `Sink::open`, at every split; `UploadSession::captured_token` gives the token as soon as its part ends, so the caller verifies it before reading any file byte. | about 10 ns per text field name [est., benchmarked at 0.6] |
 | 0.5 | A budget per tenant stops one tenant filling the shared temporary disk. | One `SpillQuota` per tenant in a test server. | one CAS per write |
 | 0.6 | A cheap first-bytes fingerprint (no copy) could let customs-sec skip full sniffing for common types. | Measure sniff cost with and without. | about 10 ns per file |
 | 0.7 | A WAFFLED-style mutation fuzzer finds strictness gaps faster than random fuzzing. | A structure-aware generator over the corpus. | CI minutes only |
@@ -676,3 +677,11 @@ Every other open decision of the specification is decided below (D-004 to D-035)
 | D-080 | 2026-10-23 | Every error location is split-invariant: header errors report the start of the header block, budget errors the first byte past the budget, framing errors the offending byte | a location that moved with the chunk boundaries would make the same body fail differently on different networks (T-32); the split tests compare errors byte for byte |
 | D-081 | 2026-10-23 | A part's `Content-Disposition` parameter whose name contains `*`, other than the exact `filename*` (which `ExtendedFilenamePolicy` governs), is refused as `MalformedParameter`; this replaces "unknown parameters ignored" for starred names | RFC 2231 readers join `filename*0` into a file name and prefer `name*` over `name`: ignoring them let a body be a text field to form-net and a file, or another field, to an inspection layer in front (found by review) |
 | D-082 | 2026-10-23 | A backslash in a part's `name` is refused as `MalformedParameter`; in a file name it stays literal | RFC 9110 readers drop it as a quoted pair, browsers send it as itself; no form needs one in a name, while file names on Unix can hold one, and reading it literally is the safe side (the name form-net sees is never shorter than the one an RFC reader sees) |
+| D-083 | 2026-10-23 | With `alloc`, wiping is crypt-io's `wipe` and `wipe_vec` (volatile, whole allocation); this replaces D-028's `fill(0)` plus `black_box` everywhere but the allocation-free core | crypt-io is the portfolio's audited-cryptography exception and now exposes a vetted wipe, the condition D-028 set; it pulls `zeroize` and `subtle`, which the dependency allowlist names |
+| D-084 | 2026-10-23 | `FileName::sanitized` replaces every Unicode `Default_Ignorable_Code_Point` with `_` before `path_lib::sanitize` | path-lib 1.0 replaces only the bidirectional controls and the BOM, so zero-width spaces, joiners, soft hyphens, variation selectors, and tag characters passed through (found by the T-21 test); the check runs only on non-ASCII names, one pass; the list belongs in path-lib, which is a follow-up there |
+| D-085 | 2026-10-23 | T-31 is tested by a `cfg(test)` counter of the bytes each wipe covers, not by reading freed memory; file metadata (field name, file name, content type) is wiped with the bytes | reading freed memory needs `unsafe`, which the crate forbids even in tests; the counter proves every drop path wipes the whole allocation, and crypt-io's volatile write does the rest |
+| D-086 | 2026-10-23 | 0.4 additions to the 0.2 contract: `impl Inspector for &mut I`; `OwnedPartHead::{new, with_capacity, copy_from, view}`; `StoredFile::persist` removes a partial destination when a copy fails | a caller keeps ownership of its inspector across calls; a driver-free consumer needs to keep a head past the parser's next call; a failed persist must leave nothing under the caller's name |
+| D-088 | 2026-10-23 | Inspectors chain: `impl Inspector for (A, B)` (A first; the first refusal wins and B is not asked; otherwise `Skip` if either skips; `failed` reaches both) and `impl Inspector for Box<I>` | customs-sec, sentinel-sec, and the application all inspect one parse; the combination rules are easy to get wrong, so they live in form-net once (found by the customs-sec and web-net shape review); a pair is static dispatch and costs one extra call per hook |
+| D-089 | 2026-10-23 | The driver opens the sink lazily: after `part_start`, `sniff`, and `data` for the first chunk have accepted the part, or at the end of an empty file; T-38 becomes "no sink call at all before the verdicts" | a sink that creates its destination in `open` (an object-store upload, a file named at open) created storage for a part the inspector then refused; now a refused or skipped part touches no storage (found by the shape review); no cost |
+| D-090 | 2026-10-23 | Shapes left for 0.5, from the customs-sec and web-net review: `FromForm::from_upload_mut(&mut Upload)` (typed fields and accessors from one upload), an all-errors extraction for re-rendering a form, and one owned type for both encodings (`get`/`get_all` on `Upload`, or `Upload::from_form`) | each is additive, neither consumer has code yet, and 0.5 is the feature-complete release; they are in the 0.5 roadmap |
+| D-087 | 2026-10-23 | T-33 (1,000 concurrent parses within `memory_bound`) moves from 0.4 to 0.5 | it measures against `Limits::memory_bound` (#25) and `Store::memory_bound` (#71), both 0.5 items; it runs with the 0.5 `memory_bound.rs` peak-tracking test |

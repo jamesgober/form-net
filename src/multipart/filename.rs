@@ -126,6 +126,29 @@ impl<'a> FileName<'a> {
         }
     }
 
+    /// The text after the last `.` of the base name, when it is 1 to 16
+    /// ASCII letters or digits. A hint that proves nothing about the
+    /// content: only the bytes tell what a file is.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=\"a/b.tar.gz\"\r\n\r\n\r\n--X--";
+    /// # let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// assert_eq!(mp.file("f").unwrap().filename().unwrap().extension(), Some("gz"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
+    #[must_use]
+    pub fn extension(&self) -> Option<&'a str> {
+        let base = self.basename();
+        let dot = base.iter().rposition(|&b| b == b'.')?;
+        let ext = base.get(dot.wrapping_add(1)..)?;
+        if ext.is_empty() || ext.len() > 16 || !ext.iter().all(u8::is_ascii_alphanumeric) {
+            return None;
+        }
+        core::str::from_utf8(ext).ok()
+    }
+
     /// Writes the name into `out` with the HTML escapes `%0A`, `%0D`, `%22`
     /// decoded to LF, CR, `"`, and nothing else, and returns it as text.
     /// Browsers do not escape `%` itself, so a file the user named `a%22b`
@@ -283,6 +306,21 @@ mod tests {
             alloc::borrow::Cow::Borrowed("plain")
         ));
         assert_eq!(name(b"a%22").html_unescaped().unwrap(), "a\"");
+    }
+
+    #[test]
+    fn test_extension_cases() {
+        assert_eq!(name(b".bashrc").extension(), Some("bashrc"));
+        assert_eq!(name(b"a.").extension(), None);
+        assert_eq!(name(b"a.tar.gz").extension(), Some("gz"));
+        assert_eq!(name("a.\u{c4}\u{d6}".as_bytes()).extension(), None);
+        assert_eq!(
+            name(b"a.1234567890123456").extension(),
+            Some("1234567890123456")
+        );
+        assert_eq!(name(b"a.12345678901234567").extension(), None);
+        assert_eq!(name(b"dir.d/file").extension(), None);
+        assert_eq!(name(b"noext").extension(), None);
     }
 
     #[test]

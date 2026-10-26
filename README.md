@@ -26,10 +26,10 @@
     <br>
     <hr>
     <p>
-        <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>#![forbid(unsafe_code)]</code>. No third-party dependencies.
+        <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>#![forbid(unsafe_code)]</code>. No third-party dependencies apart from the audited <code>zeroize</code> and <code>subtle</code>, which first-party <code>crypt-io</code> brings for wiping secrets.
     </p>
     <blockquote>
-        <strong>Status: core (<code>0.3.0</code>).</strong> urlencoded parsing and serializing, form detection, and the streaming and buffered multipart parsers are in. Upload storage, inspection hooks, and typed extraction arrive in <code>0.4.0</code>. The contract is <a href="./docs/API.md"><code>docs/API.md</code></a>; the schedule is <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: extended (<code>0.4.0</code>).</strong> Parsing, upload storage, inspection hooks, blocking readers, and typed extraction are in. The multipart writer, the shared disk budget, and <code>sweep</code> arrive in <code>0.5.0</code>. The contract is <a href="./docs/API.md"><code>docs/API.md</code></a>; the schedule is <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -65,10 +65,10 @@ The plan for 1.0. Each item names the version that ships it.
 
 ```toml
 [dependencies]
-form-net = "0.3"
+form-net = { version = "0.4", features = ["fs"] }
 ```
 
-Without default features the crate is `no_std` and needs no allocator: the allocation-free core (`raw_pairs`, `decode_into`, `MultipartParser::with_buffer`) works on any target. Add `features = ["alloc"]` for the owned results.
+The `fs` feature adds upload storage; the default features cover parsing, hooks, readers, and typed forms. Without default features the crate is `no_std` and needs no allocator: the allocation-free core (`raw_pairs`, `decode_into`, `MultipartParser::with_buffer`) works on any target. Add `features = ["alloc"]` for the owned results.
 
 ---
 
@@ -76,7 +76,7 @@ Without default features the crate is `no_std` and needs no allocator: the alloc
 
 ## Quick start
 
-The API below is fixed by the design lock; the 0.3 parts work today, the 0.4 parts arrive next.
+Everything below works in 0.4.
 
 ```rust
 use form_net as fnet;
@@ -94,6 +94,7 @@ let mp = fnet::parse_multipart(content_type, body)?;
 let title = mp.field("title").unwrap_or("");
 
 // A typed form, either encoding (0.4)
+use fnet::FromForm;
 fnet::form! {
     pub struct Login {
         pub email: String,

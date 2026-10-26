@@ -2,8 +2,12 @@
 //! parser, and the buffered entry points built on it.
 
 pub(crate) mod boundary;
+#[cfg(feature = "alloc")]
+pub(crate) mod driver;
 pub(crate) mod filename;
 pub(crate) mod header;
+#[cfg(feature = "alloc")]
+pub(crate) mod owned_head;
 pub(crate) mod parser;
 
 #[cfg(feature = "alloc")]
@@ -15,15 +19,21 @@ mod buffered {
 
     use super::filename::{FileName, FileNameSource};
     use super::header::Text;
-    use super::parser::{Charset, ContentType, MultipartParser, Outcome, PartKind, Source};
+    use super::parser::{
+        Charset, ContentType, MultipartParser, Outcome, PartHead, PartKind, PartSummary, Source,
+    };
     use crate::error::{EncodingError, ExtractError, FormError, Location};
+    use crate::hook::{Inspector, NoInspector, Verdict};
     use crate::limits::{Limits, Policy};
 
     /// One part of a buffered multipart body. Its data borrows the body.
     pub struct Part<'a> {
         index: u32,
         name: Cow<'a, str>,
+        name_raw: &'a [u8],
+        block: &'a [u8],
         kind: PartKind,
+        charset: Charset,
         filename: Option<(Cow<'a, [u8]>, FileNameSource)>,
         content_type: Option<&'a [u8]>,
         body: &'a [u8],
@@ -201,6 +211,20 @@ mod buffered {
         #[must_use]
         pub const fn is_empty(&self) -> bool {
             self.body.is_empty()
+        }
+
+        /// The head of this part, for inspectors.
+        pub(crate) fn head(&self) -> PartHead<'_> {
+            PartHead::from_parts(
+                self.index,
+                self.block,
+                &self.name,
+                self.name_raw,
+                self.kind,
+                self.filename(),
+                self.content_type,
+                self.charset,
+            )
         }
 
         fn field_text(&self) -> &'a str {
@@ -450,16 +474,80 @@ mod buffered {
         limits: &Limits,
         policy: &Policy,
     ) -> Result<Multipart<'a>, FormError> {
+        parse_multipart_inspected_raw(content_type, body, limits, policy, &mut NoInspector)
+    }
+
+    /// As [`parse_multipart_with`], with an inspector called in the order
+    /// the [`Inspector`] documentation guarantees. For a buffered body the
+    /// sniff window is a slice of the body, not a copy. A part the
+    /// inspector skips is left out of the result.
+    ///
+    /// # Errors
+    ///
+    /// As [`parse_multipart_with`]; `Refused`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Inspector, Limits, PartHead, Policy, Refusal, Verdict};
+    ///
+    /// struct OnlyTitle;
+    /// impl Inspector for OnlyTitle {
+    ///     fn part_start(&mut self, head: &PartHead<'_>) -> Verdict {
+    ///         if head.name() == "title" { Verdict::Continue } else { Verdict::Skip }
+    ///     }
+    /// }
+    ///
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHi\r\n--X\r\nContent-Disposition: form-data; name=other\r\n\r\nx\r\n--X--";
+    /// let mp = form_net::parse_multipart_inspected(b"multipart/form-data; boundary=X", body, &Limits::DEFAULT, &Policy::DEFAULT, &mut OnlyTitle)?;
+    /// assert_eq!((mp.len(), mp.field("title")), (1, Some("Hi")));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
+    pub fn parse_multipart_inspected<'a, I: Inspector>(
+        content_type: &[u8],
+        body: &'a [u8],
+        limits: &Limits,
+        policy: &Policy,
+        inspector: &mut I,
+    ) -> Result<Multipart<'a>, FormError> {
+        let result = parse_multipart_inspected_raw(content_type, body, limits, policy, inspector);
+        if let Err(e) = &result {
+            inspector.failed(e);
+        }
+        result
+    }
+
+    fn verdict(v: Verdict, at: Location) -> Result<bool, FormError> {
+        match v {
+            Verdict::Refuse(refusal) => Err(FormError::Refused { refusal, at }),
+            Verdict::Skip => Ok(true),
+            _ => Ok(false),
+        }
+    }
+
+    /// The buffered parser with its hook calls; `failed` is the caller's.
+    pub(crate) fn parse_multipart_inspected_raw<'a, I: Inspector>(
+        content_type: &[u8],
+        body: &'a [u8],
+        limits: &Limits,
+        policy: &Policy,
+        inspector: &mut I,
+    ) -> Result<Multipart<'a>, FormError> {
         let boundary = crate::Boundary::parse(content_type)?;
         let mut parser = MultipartParser::new(boundary, limits, policy)?;
+        let sniff = limits.sniff() as usize;
+        let skip_empty = policy.empty_files == crate::EmptyFilePolicy::Skip;
         let mut parts = Vec::new();
         let mut pos = 0usize;
-        let mut current: Option<(Part<'a>, bool)> = None;
+        // The part being read, whether its text is readable, and whether
+        // the inspector skipped it.
+        let mut current: Option<(Part<'a>, bool, bool)> = None;
         loop {
             let rest = body.get(pos..).unwrap_or(&[]);
             let (consumed, outcome) = parser.advance(rest, true)?;
             let base = pos;
             pos = pos.saturating_add(consumed);
+            let at = Location::in_part(parser.parts_seen().checked_sub(1), parser.bytes_seen());
             match outcome {
                 Outcome::PartStart(facts, source) => {
                     let block_start = match source {
@@ -487,42 +575,74 @@ mod buffered {
                     let part = Part {
                         index: parser.parts_seen().saturating_sub(1),
                         name,
+                        name_raw: facts.name_raw.get(block),
+                        block,
                         kind: facts.kind,
+                        charset: facts.charset,
                         filename,
                         content_type: facts.content_type.map(|span| span.get(block)),
                         body: &[],
                         offset: parser.data_start(),
                     };
-                    current = Some((part, charset_ok));
+                    // A file input left empty under `Skip` is announced at
+                    // its first data byte, which here is at its end.
+                    let empty_name = part
+                        .filename
+                        .as_ref()
+                        .is_some_and(|(raw, _)| raw.is_empty());
+                    let delayed = part.is_file() && empty_name && skip_empty;
+                    let skipped = !delayed && verdict(inspector.part_start(&part.head()), at)?;
+                    if skipped {
+                        parser.skip_part();
+                    }
+                    current = Some((part, charset_ok, skipped));
                 }
                 Outcome::PartEnd(summary) => {
-                    if let Some((mut part, charset_ok)) = current.take() {
-                        let start = usize::try_from(part.offset).unwrap_or(usize::MAX);
-                        let end = start.saturating_add(usize::try_from(summary.bytes).unwrap_or(0));
-                        part.body = body.get(start..end).unwrap_or(&[]);
-                        let skipped_empty = part.is_file()
-                            && part.body.is_empty()
-                            && part
-                                .filename
-                                .as_ref()
-                                .is_some_and(|(raw, _)| raw.is_empty())
-                            && parser.policy().empty_files == crate::EmptyFilePolicy::Skip;
-                        if skipped_empty {
+                    let Some((mut part, charset_ok, mut skipped)) = current.take() else {
+                        continue;
+                    };
+                    let start = usize::try_from(part.offset).unwrap_or(usize::MAX);
+                    let end = start.saturating_add(usize::try_from(summary.bytes).unwrap_or(0));
+                    part.body = body.get(start..end).unwrap_or(&[]);
+                    let empty_name = part
+                        .filename
+                        .as_ref()
+                        .is_some_and(|(raw, _)| raw.is_empty());
+                    if part.is_file() && empty_name && skip_empty {
+                        if part.body.is_empty() {
                             // A file input left empty produces nothing.
                             continue;
                         }
-                        if !part.is_file() {
-                            let at = Location::in_part(Some(part.index), part.offset);
-                            if !charset_ok {
-                                return Err(FormError::encoding(
-                                    EncodingError::UnsupportedCharset,
-                                    at,
-                                ));
-                            }
-                            if core::str::from_utf8(part.body).is_err() {
-                                return Err(FormError::encoding(EncodingError::InvalidUtf8, at));
-                            }
+                        skipped = verdict(inspector.part_start(&part.head()), at)?;
+                    }
+                    if !skipped && !part.is_file() {
+                        let text_at = Location::in_part(Some(part.index), part.offset);
+                        if !charset_ok {
+                            return Err(FormError::encoding(
+                                EncodingError::UnsupportedCharset,
+                                text_at,
+                            ));
                         }
+                        if core::str::from_utf8(part.body).is_err() {
+                            return Err(FormError::encoding(EncodingError::InvalidUtf8, text_at));
+                        }
+                    }
+                    if !skipped && part.is_file() && sniff > 0 {
+                        let window = part.body.get(..sniff.min(part.body.len())).unwrap_or(&[]);
+                        skipped = verdict(inspector.sniff(&part.head(), window), at)?;
+                    }
+                    if !skipped && !part.body.is_empty() {
+                        skipped = verdict(inspector.data(part.index, part.body), at)?;
+                    }
+                    if !skipped && !part.is_file() {
+                        skipped = verdict(inspector.field(part.name(), part.body), at)?;
+                    }
+                    let summary = PartSummary {
+                        skipped: skipped || summary.skipped,
+                        ..summary
+                    };
+                    verdict(inspector.part_end(&summary), at)?;
+                    if !skipped {
                         parts.push(part);
                     }
                 }
@@ -532,6 +652,9 @@ mod buffered {
                     if pos < body.len() {
                         let rest = body.get(pos..).unwrap_or(&[]);
                         let _ = parser.advance(rest, true)?;
+                    }
+                    if let Verdict::Refuse(refusal) = inspector.end() {
+                        return Err(FormError::Refused { refusal, at });
                     }
                     break;
                 }
@@ -543,4 +666,8 @@ mod buffered {
 }
 
 #[cfg(feature = "alloc")]
-pub use buffered::{Multipart, Part, parse_multipart, parse_multipart_with};
+pub(crate) use buffered::parse_multipart_inspected_raw;
+#[cfg(feature = "alloc")]
+pub use buffered::{
+    Multipart, Part, parse_multipart, parse_multipart_inspected, parse_multipart_with,
+};
