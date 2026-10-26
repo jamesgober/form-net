@@ -33,11 +33,81 @@ pub fn raw_pairs<'a>(input: &'a [u8], limits: &Limits) -> RawPairs<'a> {
     RawPairs {
         input,
         pos: 0,
-        fields: 0,
-        text: 0,
-        limits: *limits,
+        budget: Budget::new(limits),
         done: false,
         checked_body: false,
+    }
+}
+
+/// The per-sequence budgets, shared by [`raw_pairs`] and the streaming
+/// parser so both refuse the same sequence with the same error.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Budget {
+    pub(crate) limits: Limits,
+    fields: u32,
+    text: u64,
+}
+
+impl Budget {
+    pub(crate) const fn new(limits: &Limits) -> Budget {
+        Budget {
+            limits: *limits,
+            fields: 0,
+            text: 0,
+        }
+    }
+
+    /// Counts and checks one complete, non-empty sequence: field count,
+    /// name length, value length, then the text total.
+    pub(crate) fn admit(&mut self, pair: &RawPair<'_>) -> Result<(), FormError> {
+        let at = Location::at(pair.offset);
+        self.fields = self.fields.saturating_add(1);
+        if self.fields > self.limits.max_fields {
+            return Err(FormError::limit(Limit::Fields, at));
+        }
+        if pair.name.len() as u64 > u64::from(self.limits.name()) {
+            return Err(FormError::limit(Limit::NameLength, at));
+        }
+        let value_at = pair.value_offset();
+        if pair.value.len() as u64 > u64::from(self.limits.value()) {
+            return Err(FormError::limit(Limit::ValueLength, value_at));
+        }
+        self.text = self.text.saturating_add(pair.value.len() as u64);
+        if self.text > self.limits.text() {
+            return Err(FormError::limit(Limit::TextTotal, value_at));
+        }
+        Ok(())
+    }
+
+    /// Checks the start of a sequence that is not complete yet: when its
+    /// complete form is certain to be refused, refuses it now with the error
+    /// [`admit`](Self::admit) would give, so a held sequence never outgrows
+    /// `urlencoded_buffer_len`.
+    pub(crate) fn admit_partial(
+        &self,
+        offset: u64,
+        name_len: usize,
+        has_equals: bool,
+        value_len: usize,
+    ) -> Result<(), FormError> {
+        let name_over = name_len as u64 > u64::from(self.limits.name());
+        let value_over = has_equals && value_len as u64 > u64::from(self.limits.value());
+        if !name_over && !value_over {
+            return Ok(());
+        }
+        if self.fields.saturating_add(1) > self.limits.max_fields {
+            return Err(FormError::limit(Limit::Fields, Location::at(offset)));
+        }
+        if name_over {
+            return Err(FormError::limit(Limit::NameLength, Location::at(offset)));
+        }
+        let value_at = offset.saturating_add(name_len as u64).saturating_add(1);
+        Err(FormError::limit(Limit::ValueLength, Location::at(value_at)))
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.fields = 0;
+        self.text = 0;
     }
 }
 
@@ -46,9 +116,7 @@ pub fn raw_pairs<'a>(input: &'a [u8], limits: &Limits) -> RawPairs<'a> {
 pub struct RawPairs<'a> {
     input: &'a [u8],
     pos: usize,
-    fields: u32,
-    text: u64,
-    limits: Limits,
+    budget: Budget,
     done: bool,
     checked_body: bool,
 }
@@ -57,7 +125,7 @@ impl fmt::Debug for RawPairs<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RawPairs")
             .field("position", &self.pos)
-            .field("fields", &self.fields)
+            .field("fields", &self.budget.fields)
             .finish_non_exhaustive()
     }
 }
@@ -78,10 +146,10 @@ impl<'a> Iterator for RawPairs<'a> {
         }
         if !self.checked_body {
             self.checked_body = true;
-            if self.input.len() > self.limits.body_usize() {
+            if self.input.len() > self.budget.limits.body_usize() {
                 return self.fail(FormError::limit(
                     Limit::Body,
-                    Location::at(self.limits.body()),
+                    Location::at(self.budget.limits.body()),
                 ));
             }
         }
@@ -128,29 +196,16 @@ impl<'a> Iterator for RawPairs<'a> {
                 }
                 None => (seq, &[][..]),
             };
-            let offset = start as u64;
-            let at = Location::at(offset);
-            self.fields = self.fields.saturating_add(1);
-            if self.fields > self.limits.max_fields {
-                return self.fail(FormError::limit(Limit::Fields, at));
-            }
-            if name.len() as u64 > u64::from(self.limits.name()) {
-                return self.fail(FormError::limit(Limit::NameLength, at));
-            }
-            let value_at = Location::at(offset.saturating_add(name.len() as u64).saturating_add(1));
-            if value.len() as u64 > u64::from(self.limits.value()) {
-                return self.fail(FormError::limit(Limit::ValueLength, value_at));
-            }
-            self.text = self.text.saturating_add(value.len() as u64);
-            if self.text > self.limits.text() {
-                return self.fail(FormError::limit(Limit::TextTotal, value_at));
-            }
-            return Some(Ok(RawPair {
+            let pair = RawPair {
                 name,
                 value,
                 flags,
-                offset,
-            }));
+                offset: start as u64,
+            };
+            if let Err(e) = self.budget.admit(&pair) {
+                return self.fail(e);
+            }
+            return Some(Ok(pair));
         }
     }
 }
@@ -179,6 +234,53 @@ impl fmt::Debug for RawPair<'_> {
 }
 
 impl<'a> RawPair<'a> {
+    /// Splits one sequence (no `&` in it) found at `offset` in the body.
+    pub(crate) fn split(seq: &'a [u8], offset: u64) -> RawPair<'a> {
+        let mut flags = 0u8;
+        let mut eq = None;
+        let mut i = 0usize;
+        loop {
+            i = crate::scan::find_any(seq, i, *b"&=%+");
+            match seq.get(i) {
+                None => break,
+                Some(b'=') if eq.is_none() => {
+                    eq = Some(i);
+                    flags |= HAS_EQUALS;
+                }
+                Some(b'%' | b'+') => {
+                    flags |= if eq.is_some() {
+                        VALUE_DECODE
+                    } else {
+                        NAME_DECODE
+                    };
+                }
+                Some(_) => {}
+            }
+            i = i.wrapping_add(1);
+        }
+        let (name, value) = match eq {
+            Some(e) => (
+                seq.get(..e).unwrap_or(&[]),
+                seq.get(e.wrapping_add(1)..).unwrap_or(&[]),
+            ),
+            None => (seq, &[][..]),
+        };
+        RawPair {
+            name,
+            value,
+            flags,
+            offset,
+        }
+    }
+
+    fn value_offset(&self) -> Location {
+        Location::at(
+            self.offset
+                .saturating_add(self.name.len() as u64)
+                .saturating_add(1),
+        )
+    }
+
     /// The name as sent, before decoding.
     ///
     /// # Examples

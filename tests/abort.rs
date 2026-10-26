@@ -12,6 +12,9 @@ use form_net::{
 
 const CT: &[u8] = b"multipart/form-data; boundary=X";
 
+/// The handle count is process-wide: the tests here must not overlap.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn body() -> Vec<u8> {
     let mut out = Vec::new();
     for (i, size) in [40usize, 3, 70].iter().enumerate() {
@@ -46,6 +49,9 @@ fn open_handles() -> usize {
 
 #[test]
 fn test_truncated_at_every_byte_leaves_nothing() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let b = body();
     for mode in [SpillMode::Named, SpillMode::Anonymous] {
         let d = dir("cut");
@@ -92,6 +98,9 @@ impl Inspector for RefuseEnd {
 
 #[test]
 fn test_refusal_after_files_were_stored_deletes_them() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let b = body();
     let d = dir("refuse");
     let store = Store::in_dir(&d)

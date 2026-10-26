@@ -13,6 +13,51 @@
 
 ---
 
+## [0.5.0] - 2026-10-26
+
+Feature complete: every P0, P1, and P2 item of the design.
+
+### Added
+
+- `UrlencodedParser`, `UrlencodedStep`, `UrlencodedEvent`: streaming
+  urlencoded over a caller scratch buffer; the same pairs and errors for
+  every split of a body.
+- The client side: `MultipartWriter` (feature `std`; `new` with a generated
+  boundary under `random`), `encode_part_head` (no allocation), and
+  `Boundary::generate`. Every body the writer produces parses back with
+  form-net to the same fields; inputs that could not are refused before a
+  byte is written.
+- `SpillBudget` and `SpillQuota`, with `Store::quota`: a disk budget shared
+  across requests and stores; the request that would cross it is refused
+  with a 503 hint. `sweep` removes named-mode spill files left by a crash.
+- `Limits::memory_bound` and `Store::memory_bound` for admission control,
+  measured against hostile bodies.
+- Feature `unicode`: `FileName::nfc`; `FileName::sanitized` normalizes to
+  NFC first.
+- Extraction: `FromForm::from_body_all` and `FormErrors` (every field's
+  error, for showing a form again), `FromForm::from_upload_mut` (the upload
+  stays usable), and `Upload::from_form` (one owned type for both
+  encodings, with the anti-forgery token captured as for multipart).
+- `docs/ARCHITECTURE.md` and `docs/PLATFORM-NOTES.md`; every example in
+  `docs/API.md` now runs as a doctest.
+- Example `build_multipart_client`.
+
+### Changed
+
+- A memory-held file's buffer is capped at the most it can hold, and the
+  upload text arena at its text and name budgets.
+- The CI security job audits the newest-version dependency resolution.
+
+### Security
+
+- Tests for T-7 (parallel uploads against a shared budget), T-11 (named
+  mode plus `sweep` after a killed process), T-21 (NFD names), T-33 (1,000
+  concurrent uploads within 1,000 times `memory_bound`), T-34 (header
+  injection through the writer), and T-35 (delimiter in client data). A
+  `loom` model of `SpillQuota` runs in CI.
+
+---
+
 ## [0.4.0] - 2026-10-23
 
 Upload storage, inspection hooks, blocking readers, and typed extraction.
@@ -186,7 +231,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jamesgober/form-net/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/form-net/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/form-net/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jamesgober/form-net/compare/v0.1.0...v0.2.0

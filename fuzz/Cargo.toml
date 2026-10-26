@@ -12,7 +12,7 @@ libfuzzer-sys = "0.4"
 
 [dependencies.form-net]
 path = ".."
-features = ["fs"]
+features = ["fs", "unicode"]
 
 # Keeps this crate out of any parent workspace.
 [workspace]
@@ -84,6 +84,20 @@ bench = false
 [[bin]]
 name = "fuzz_upload_session"
 path = "fuzz_targets/fuzz_upload_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_urlencoded_stream"
+path = "fuzz_targets/fuzz_urlencoded_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_writer_roundtrip"
+path = "fuzz_targets/fuzz_writer_roundtrip.rs"
 test = false
 doc = false
 bench = false

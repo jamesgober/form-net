@@ -140,6 +140,18 @@ jobs:
             cargo fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=60 -rss_limit_mb=2048
           done
 
+  loom:
+    name: Loom model (SpillQuota)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Three threads, never over the limit, never below zero, no lost release
+        run: cargo test --release --features fs --lib loom
+        env:
+          RUSTFLAGS: "-D warnings --cfg loom"
+
   package:
     name: Package
     runs-on: ubuntu-latest

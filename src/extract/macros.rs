@@ -106,6 +106,32 @@ macro_rules! form {
                         )*
                     })
                 }
+
+                fn file_field(&self, name: &str) -> ::core::option::Option<bool> {
+                    $( if name == $crate::__form_wire!($field $(, $wire)?) { return ::core::option::Option::Some(true); } )*
+                    $( $( if name == $ignored { return ::core::option::Option::Some(false); } )* )?
+                    ::core::option::Option::None
+                }
+
+                fn finish_all(
+                    self,
+                    __form_net_errors: &mut $crate::__Vec<$crate::FormError>,
+                ) -> ::core::option::Option<$name> {
+                    let __form_net_before = __form_net_errors.len();
+                    $(
+                        let $field = match <$ty as $crate::FromField>::finish(self.$field) {
+                            ::core::result::Result::Ok(v) => ::core::option::Option::Some(v),
+                            ::core::result::Result::Err(e) => {
+                                $crate::__push_field_error(__form_net_errors, e, ::core::stringify!($field));
+                                ::core::option::Option::None
+                            }
+                        };
+                    )*
+                    if __form_net_errors.len() > __form_net_before {
+                        return ::core::option::Option::None;
+                    }
+                    ::core::option::Option::Some($name { $( $field: $field?, )* })
+                }
             }
 
             impl $crate::FromForm for $name {

@@ -74,6 +74,10 @@ fn crash_with(mode: &str) -> usize {
     child.kill().unwrap();
     let _ = child.wait();
     let left = std::fs::read_dir(&dir).unwrap().count();
+    // What a restarted server does first: sweep the leftovers.
+    let swept = form_net::sweep(&dir, std::time::Duration::ZERO).unwrap();
+    assert_eq!(swept, left, "sweep removes every leftover spill file");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     let _ = std::fs::remove_dir_all(&dir);
     left
 }
@@ -84,7 +88,7 @@ fn test_anonymous_files_do_not_survive_a_crash() {
 }
 
 #[test]
-fn test_named_files_survive_a_crash_for_sweep() {
-    // Named mode keeps the file for `sweep` (0.5) to remove at startup.
+fn test_attack_t11_named_files_survive_a_crash_until_sweep() {
+    // Named mode leaves the file; `sweep` at startup removes it.
     assert_eq!(crash_with("named"), 1);
 }

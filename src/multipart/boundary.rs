@@ -104,6 +104,36 @@ impl Boundary {
         })
     }
 
+    /// A fresh boundary: `form-net-` and 32 lowercase hex characters from 16
+    /// bytes of the OS random source (41 bytes, all `bchars`).
+    ///
+    /// # Errors
+    ///
+    /// `Random` when the OS random source fails (fail closed).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let b = form_net::Boundary::generate()?;
+    /// assert_eq!(b.as_bytes().len(), 41);
+    /// assert!(b.as_bytes().starts_with(b"form-net-"));
+    /// assert_ne!(b, form_net::Boundary::generate()?);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
+    #[cfg(feature = "random")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "random")))]
+    pub fn generate() -> Result<Boundary, FormError> {
+        let hex = crate::random::random_hex()?;
+        let mut name = [0u8; 41];
+        if let Some(head) = name.get_mut(..9) {
+            head.copy_from_slice(b"form-net-");
+        }
+        if let Some(tail) = name.get_mut(9..) {
+            tail.copy_from_slice(&hex);
+        }
+        Boundary::new(&name)
+    }
+
     /// Reads the boundary from a whole `multipart/form-data` `Content-Type`
     /// value.
     ///

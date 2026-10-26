@@ -180,6 +180,31 @@ impl<'a> FileName<'a> {
             .map_err(|_| FormError::encoding(EncodingError::InvalidUtf8, Location::at(0)))
     }
 
+    /// The name as UTF-8 in Unicode NFC (macOS clients may send NFD, so the
+    /// same visible name can arrive as different bytes).
+    ///
+    /// # Errors
+    ///
+    /// `Encoding { InvalidUtf8 }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = "--X\r\nContent-Disposition: form-data; name=f; filename=\"cafe\u{301}.txt\"\r\n\r\n\r\n--X--";
+    /// # let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body.as_bytes())?;
+    /// let name = mp.file("f").unwrap().filename().unwrap();
+    /// assert_eq!(name.nfc()?, "caf\u{e9}.txt");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
+    #[cfg(feature = "unicode")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "unicode")))]
+    pub fn nfc(&self) -> Result<alloc::string::String, FormError> {
+        Ok(unicode_lang::normalize(
+            self.as_str()?,
+            unicode_lang::Form::Nfc,
+        ))
+    }
+
     /// As [`html_unescape_into`](Self::html_unescape_into), borrowed when the
     /// name has nothing to decode.
     ///
