@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "form-net"
-version = "0.4.0"
+version = "0.5.0"
 
 # Minimum Supported Rust Version (MSRV)
 rust-version = "1.85"
@@ -62,6 +62,9 @@ random = ["std", "dep:mod-rand"]
 # Upload storage: private temporary files, StoredFile, Upload, UploadSession.
 fs = ["std", "random", "dep:path-lib"]
 
+# NFC file names: FileName::nfc, and NFC first in FileName::sanitized.
+unicode = ["alloc", "dep:unicode-lang"]
+
 
 # DEPENDENCIES
 # #################################
@@ -80,12 +83,22 @@ mod-rand = { version = "1", default-features = false, features = ["tier3"], opti
 # First-party: path_lib::sanitize for FileName::sanitized.
 path-lib = { version = "1", optional = true }
 
+# First-party: Unicode NFC for file names (macOS clients may send NFD).
+unicode-lang = { version = "1.0.1", default-features = false, features = ["alloc"], optional = true }
+
 
 
 # DEV DEPENDENCIES
 # #################################
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
+
+# The model checker for SpillQuota, only under `--cfg loom` (CI job `loom`).
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 
 
 # EXAMPLES
@@ -135,3 +148,7 @@ required-features = ["fs"]
 [[example]]
 name = "token_first"
 required-features = ["fs"]
+
+[[example]]
+name = "build_multipart_client"
+required-features = ["random"]

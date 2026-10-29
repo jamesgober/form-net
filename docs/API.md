@@ -1,7 +1,7 @@
 # form-net - API Reference
 
 > Reference for every public item in `form-net`: signature, behaviour, the errors each item can return, cost, and examples.
-> **Current release: `0.4.0` (extended).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.5.0` (feature complete).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -155,6 +155,7 @@ The convention in every example is `use form_net as fnet;` where a short prefix 
 
 ```rust
 use form_net as fnet;
+use fnet::FromForm;
 
 // A urlencoded body (0.3)
 let form = fnet::parse_urlencoded(b"email=a%40b.example&remember=on")?;
@@ -169,6 +170,8 @@ assert_eq!(query.get("q"), Some("rust forms"));
 assert_eq!(fnet::serialize_urlencoded([("q", "rust forms"), ("page", "2")]), "q=rust+forms&page=2");
 
 // A buffered multipart body (0.3)
+# let content_type = b"multipart/form-data; boundary=X";
+# let body = b"--X\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\n\x89PNG...\r\n--X--\r\n";
 let mp = fnet::parse_multipart(content_type, body)?;
 let title = mp.field("title").unwrap_or("");
 if let Some(avatar) = mp.file("avatar") {
@@ -184,13 +187,19 @@ fnet::form! {
     }
     ignore = ["csrf_token"];
 }
+# let content_type = b"application/x-www-form-urlencoded";
+# let body = b"email=a%40b.example&password=pw&remember=on&csrf_token=t";
 let login = Login::from_body(content_type, body)?;
 
 // An upload streamed to private temporary files (0.4, feature `fs`)
+# let content_type = b"multipart/form-data; boundary=X";
+# let request_body_reader = &b"--X\r\nContent-Disposition: form-data; name=\"document\"; filename=\"a.txt\"\r\n\r\nhello\r\n--X--\r\n"[..];
+# let destination = std::env::temp_dir().join(format!("form-net-api-glance-{}.txt", std::process::id()));
 let mut upload = fnet::read_multipart(content_type, request_body_reader)?;
 if let Some(file) = upload.take_file("document") {
     file.persist(&destination)?;          // never overwrites
 }
+# std::fs::remove_file(&destination).unwrap();
 # Ok::<(), form_net::FormError>(())
 ```
 
@@ -202,7 +211,7 @@ if let Some(file) = upload.take_file("document") {
 
 `#1` · P0 · Tier 1 · 0.1 · core
 
-```rust
+```rust,ignore
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ```
 
@@ -220,7 +229,7 @@ println!("form-net {}", form_net::VERSION);
 
 `#2` · P0 · Tier 1 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormKind {
@@ -289,7 +298,7 @@ The urlencoded parser follows the WHATWG URL standard section 5.1, with strict r
 
 `#3` · P0 · Tier 1 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 pub fn parse_urlencoded(input: &[u8]) -> Result<Form, FormError>;
 ```
 
@@ -319,7 +328,7 @@ assert!(form_net::parse_urlencoded(b"name=%C0%AF").is_err());     // overlong UT
 
 `#4` · P1 · Tier 1 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 pub fn parse_query(query: &[u8]) -> Result<Form, FormError>;
 ```
 
@@ -337,7 +346,7 @@ assert_eq!(form_net::parse_query(b"??q=x")?.get("?q"), Some("x"));
 
 `#5` · P0 · Tier 1 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 pub fn pairs(input: &[u8]) -> Pairs<'_>;
 
 pub struct Pairs<'a> { /* raw scanner, limits */ }
@@ -369,7 +378,7 @@ assert!(it.next().is_none());
 
 `#7` · P0 · Tier 1 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 #[must_use]
 pub struct Form { /* one arena: Vec<u8>; one span table: Vec<Span> */ }
 
@@ -418,7 +427,7 @@ assert_eq!(format!("{form:?}"), "Form { role: <4 bytes>, role: <5 bytes>, tag: <
 
 `#6` · P1 · Tier 1 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 pub fn serialize_urlencoded<I, N, V>(pairs: I) -> String
 where
     I: IntoIterator<Item = (N, V)>,
@@ -441,7 +450,7 @@ assert_eq!(form_net::serialize_urlencoded(Vec::<(&str, &str)>::new()), "");
 
 `#32` · P0 · Tier 2 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 pub fn parse_urlencoded_with(input: &[u8], limits: &Limits, policy: &Policy) -> Result<Form, FormError>;
 ```
 
@@ -471,7 +480,7 @@ assert_eq!(form.get("discount"), Some("100%"));
 
 `#63` · P1 · Tier 2 · 0.4 · `alloc`
 
-```rust
+```rust,ignore
 pub fn parse_urlencoded_inspected<I: Inspector>(
     input: &[u8],
     limits: &Limits,
@@ -507,7 +516,7 @@ assert_eq!(err.status_hint(), 422);
 
 `#41` · P1 · Tier 2 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 pub struct Serializer<'s> { /* out: &'s mut String, first: bool */ }
 
 impl<'s> Serializer<'s> {
@@ -536,7 +545,7 @@ assert_eq!(url, "https://example.com/search?q=rust+forms&page=2&sort=new");
 
 `#44` · P0 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 pub fn raw_pairs<'a>(input: &'a [u8], limits: &Limits) -> RawPairs<'a>;
 
 pub struct RawPairs<'a> { /* input, position, counters */ }
@@ -605,7 +614,7 @@ assert_eq!(email, Some(11));
 
 `#45` · P0 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 pub fn decode_into<'b>(raw: &[u8], out: &'b mut [u8], policy: PercentPolicy) -> Result<&'b str, FormError>;
 ```
 
@@ -629,7 +638,7 @@ assert_eq!(form_net::decode_into(b"%00", &mut out, PercentPolicy::Refuse)?, "\0"
 
 `#46` · P1 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 pub fn encode_into<W: core::fmt::Write>(text: &str, out: &mut W) -> core::fmt::Result;
 ```
 
@@ -645,7 +654,7 @@ assert_eq!(s, "a+b%26c");
 
 `#47` · P2 · Tier 3 · 0.5 · core (`new`: `alloc`)
 
-```rust
+```rust,ignore
 pub struct UrlencodedParser<B> { /* scratch: B, counters, state */ }
 
 impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
@@ -678,7 +687,8 @@ The streaming form, for urlencoded bodies too large to buffer or arriving in pie
 **Behaviour**
 
 - Feed chunks of any size, split at any byte. The pairs are identical for every split (FR-11).
-- A sequence that ends inside the current chunk is returned borrowed from the input. A sequence that straddles chunks is assembled in the scratch buffer (`max_name_bytes + max_value_bytes + 1` bytes, `Limits::urlencoded_buffer_len`) and returned borrowed from it. A sequence longer than the scratch is refused before it is copied.
+- A sequence that ends inside the current chunk is returned borrowed from the input. A sequence that straddles chunks is assembled in the scratch buffer (`max_name_bytes + max_value_bytes + 1` bytes, `Limits::urlencoded_buffer_len`) and returned borrowed from it. A sequence whose known bytes already prove it too long is refused before it is copied, with the error the complete sequence would get, so errors are split invariant too (D-094).
+- `max_body_bytes` is enforced on the bytes consumed: the pairs whose `&` lies inside the budget are returned, then `Limit { Body }`. (`raw_pairs`, which sees the whole body, refuses it before the first pair; the error is the same.)
 - `NeedInput` is returned only when every byte of `input` was consumed or held; pass the next chunk. `End` comes only after `eof = true`.
 - `reset` clears the counters and the poisoned state and wipes the scratch.
 
@@ -718,7 +728,7 @@ For bodies that are already in memory (the usual case for small forms, where the
 
 `#8` · P0 · Tier 1 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 pub fn parse_multipart<'a>(content_type: &[u8], body: &'a [u8]) -> Result<Multipart<'a>, FormError>;
 ```
 
@@ -754,7 +764,7 @@ assert_eq!(avatar.bytes(), b"\x89PNG...");
 
 `#9` · P0 · Tier 1 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 #[must_use]
 pub struct Multipart<'a> { /* parts: Vec<Part<'a>> */ }
 
@@ -796,6 +806,8 @@ impl<'a> Part<'a> {
 **Errors:** `field_one`: `Extract { reason: Duplicate, field: None }`. `text`: `Encoding { InvalidUtf8 | UnsupportedCharset }`.
 
 ```rust
+# let content_type = b"multipart/form-data; boundary=X";
+# let body = b"--X\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\n\x89PNG...\r\n--X--\r\n";
 let mp = form_net::parse_multipart(content_type, body)?;
 for part in mp.parts() {
     if part.is_file() {
@@ -813,7 +825,7 @@ let tags: Vec<&str> = mp.fields("tag").collect();
 
 `#33` · P1 · Tier 2 · 0.3 · `alloc`
 
-```rust
+```rust,ignore
 pub fn parse_multipart_with<'a>(
     content_type: &[u8],
     body: &'a [u8],
@@ -834,6 +846,8 @@ const AVATAR: Limits = Limits::DEFAULT
     .with_max_files(1)
     .with_max_file_bytes(500 * 1024);
 
+# let content_type = b"multipart/form-data; boundary=X";
+# let body = b"--X\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\n\x89PNG...\r\n--X--\r\n";
 let mp = form_net::parse_multipart_with(content_type, body, &AVATAR, &Policy::DEFAULT)?;
 # Ok::<(), form_net::FormError>(())
 ```
@@ -842,7 +856,7 @@ let mp = form_net::parse_multipart_with(content_type, body, &AVATAR, &Policy::DE
 
 `#64` · P1 · Tier 2 · 0.4 · `alloc`
 
-```rust
+```rust,ignore
 pub fn parse_multipart_inspected<'a, I: Inspector>(
     content_type: &[u8],
     body: &'a [u8],
@@ -883,7 +897,7 @@ The framing rules (RFC 2046 section 5.1.1 and RFC 7578), with form-net's strict 
 
 `#48` · P0 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 #[must_use]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Boundary { /* delimiter: [u8; 74], len: u8, fail: [u8; 74] */ }
@@ -924,7 +938,7 @@ assert_eq!(Boundary::parse(b"multipart/form-data; boundary=\"a b\"")?.as_bytes()
 
 `#49` · P0 · Tier 3 · 0.3 · core (`new`: `alloc`)
 
-```rust
+```rust,ignore
 pub struct MultipartParser<B> { /* state, matcher, counters, buffer: B */ }
 
 #[cfg(feature = "alloc")]
@@ -969,6 +983,8 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
 ```rust
 use form_net::{Event, FormKind, MultipartParser, Policy, Limits};
 
+# let content_type = b"multipart/form-data; boundary=X";
+# let body = b"--X\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=\"avatar\"; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\n\x89PNG...\r\n--X--\r\n";
 let FormKind::Multipart(boundary) = FormKind::detect(content_type)? else {
     return Err(form_net::FormError::UnsupportedMediaType);
 };
@@ -1011,7 +1027,7 @@ let mut parser = MultipartParser::with_buffer(Boundary::new(b"X")?, &LIMITS, &Po
 
 `#50` · P0 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub struct Step<'p> {
     pub consumed: usize,
@@ -1036,7 +1052,7 @@ Per part the order is always `PartStart`, any number of `Data` (none for an empt
 
 `#50` · P0 · Tier 3 · 0.3 · core (`headers`: P2)
 
-```rust
+```rust,ignore
 pub struct PartHead<'p> { /* borrowed views */ }
 
 impl<'p> PartHead<'p> {
@@ -1064,7 +1080,7 @@ The validated header block of one part. A head is only produced after every head
 
 `#50` · P0 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PartKind { Field, File }
@@ -1080,7 +1096,7 @@ pub enum Charset { Utf8, Ascii, Unspecified, Other }
 
 `#50` · P0 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 #[derive(Clone, Copy)]
 pub struct ContentType<'p> { /* raw value, type and subtype spans */ }
 
@@ -1100,7 +1116,7 @@ A part's declared `Content-Type`, already checked by parse-net. `is` compares AS
 
 `#50` · P2 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 #[derive(Clone)]
 pub struct Headers<'p> { /* header block */ }
 
@@ -1115,7 +1131,7 @@ Every header line of a part in order, name and trimmed value as raw bytes.
 
 `#50` · P0 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PartSummary {
@@ -1136,7 +1152,7 @@ What one part was: its index, kind, data length, and whether it was skipped (by 
 
 `#19` (core views) P0 · `#20` (`basename`, `html_unescaped`) P1 · `#22` (`extension`) P2 · `#21` (`sanitized`) P1 · `#23` (`nfc`) P2 · Tier 1
 
-```rust
+```rust,ignore
 #[derive(Clone, Copy)]
 pub struct FileName<'a> { /* raw bytes, source */ }
 
@@ -1156,7 +1172,7 @@ impl<'a> FileName<'a> {
     #[cfg(feature = "fs")]
     pub fn sanitized(&self) -> Result<String, FormError>;                                  // 0.4
     #[cfg(feature = "unicode")]
-    pub fn nfc(&self) -> Result<String, FormError>;                                        // 0.5
+    pub fn nfc(&self) -> Result<String, FormError>;                                        // 0.5, D-099
 }
 
 impl core::fmt::Debug for FileName<'_> { /* "FileName(n bytes)": file names are user data */ }
@@ -1181,6 +1197,8 @@ The client's file name, with views for each way a caller might want it. **form-n
 **Cost:** views are free; `sanitized` and `nfc` allocate one `String` (sanitize about 100 ns for a short name [est.]).
 
 ```rust
+# let body = b"--X\r\nContent-Disposition: form-data; name=\"document\"; filename=\"C:\\Users\\me\\Q3 report: final?.pdf\"\r\n\r\n%PDF\r\n--X--\r\n";
+# let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
 let part = mp.file("document").unwrap();
 let name = part.filename().unwrap();
 assert_eq!(name.raw(), b"C:\\Users\\me\\Q3 report: final?.pdf");
@@ -1200,7 +1218,7 @@ assert_eq!(name.sanitized()?, "Q3 report_ final_.pdf");      // feature `fs`
 
 `#24` · P0 · Tier 2 · 0.3 · core (`multipart_buffer_len`, `urlencoded_buffer_len`: `#72`, 0.3; `memory_bound`: `#25`, P2, 0.5)
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
@@ -1274,7 +1292,7 @@ Every budget is checked **before** the bytes it governs are buffered, stored, or
 
 `validate` refuses only what no body could satisfy, so a misconfiguration is found at startup, not under attack (FR-39): `max_part_header_bytes` below 64 (the shortest useful `Content-Disposition` line must fit), and buffer sizes that do not fit in `usize` on the target. With a token field set, the policy is checked too: an effective `max_token_bytes` of 0 is refused. Every parser constructor and every `*_with` function calls it.
 
-`memory_bound` is the worst-case number of bytes one parse with these limits can hold in memory (FR-40), for admission control: parser state (256) + the parser buffer (`multipart_buffer_len`) + the driver's copy of the current part head (the same size) + `sniff_bytes` + the field being received (`max_value_bytes`) + the text kept (`max_text_bytes`) + the files kept in memory, `max_files × min(file_in_memory_bytes, max_file_bytes)`, capped by `max_body_bytes`. `file_in_memory_bytes` is the most bytes of one file a store keeps in memory: its `memory_threshold`, or `u64::MAX` for a memory-only store (`Store::memory_bound` passes the right value). The caller's read buffer is not included (the blocking readers add 64 KiB). With the defaults and `Store::temp()` the bound is about 4.3 MiB per request against 10 MiB of input [est.]; a login route with `max_body_bytes = 4 KiB` is under 32 KiB.
+`memory_bound` is the worst-case number of bytes one parse with these limits can hold in memory (FR-40), for admission control (D-093): parser state (256); the parser buffer and the driver's copy of the current part head (each `multipart_buffer_len` under the most demanding policy); `sniff_bytes`; the field being received (`max_value_bytes`); the text kept and its names (`max_text_bytes` plus `max_fields × max_name_bytes`, the names capped by `max_body_bytes`); 96 bytes of index per field and 320 per part; owned copies of part names, file names, and content types (`max_parts × max_part_header_bytes`, capped by `max_body_bytes`); the files kept in memory, `max_files × min(file_in_memory_bytes, max_file_bytes)`, capped by twice `max_body_bytes` (a buffer that grew by doubling can hold twice its bytes); and half the largest growing buffer (a buffer that doubles holds its old half while it moves). `file_in_memory_bytes` is the most bytes of one file a store keeps in memory: its `memory_threshold`, or `u64::MAX` for a memory-only store (`Store::memory_bound` passes the right value). The caller's read buffer is not included (the blocking readers add 64 KiB). With the defaults and `Store::temp()` the bound is about 6.5 MiB per request against 10 MiB of input; a login route with `max_body_bytes = 4 KiB`, 8 fields and parts, no files, and a 1 KiB header budget is under 32 KiB. `tests/memory_bound.rs` measures hostile bodies against it with a peak-tracking allocator.
 
 **Errors:** `validate`: `InvalidLimits { limit }`, naming the first field of the first inconsistent pair.
 
@@ -1286,7 +1304,9 @@ use form_net::Limits;
 const LOGIN: Limits = Limits::DEFAULT
     .with_max_body_bytes(4 * 1024)
     .with_max_fields(8)
-    .with_max_files(0);
+    .with_max_parts(8)
+    .with_max_files(0)
+    .with_max_part_header_bytes(1024);
 LOGIN.validate()?;
 assert!(LOGIN.memory_bound(64 * 1024) < 32 * 1024);
 
@@ -1300,7 +1320,7 @@ assert_eq!(broken.validate().unwrap_err().code(), "invalid_limits");
 
 `#26` · P1 · Tier 2 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Policy {
@@ -1338,7 +1358,7 @@ const UPLOADS: Policy = Policy::DEFAULT
 
 `#27` · P1 · Tier 2 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PercentPolicy { Refuse, Literal }
@@ -1350,7 +1370,7 @@ What a `%` not followed by two hex digits means in urlencoded input. `Refuse` (d
 
 `#28` · P1 · Tier 2 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtendedFilenamePolicy { Refuse, AcceptAlone, Ignore }
@@ -1370,7 +1390,7 @@ A part with both `filename` and `filename*` is refused under every policy (`Poli
 
 `#29` · P2 · Tier 2 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeaderPolicy { Ignore, Refuse }
@@ -1382,7 +1402,7 @@ Part headers other than `Content-Disposition`, `Content-Type`, and `Content-Tran
 
 `#30` · P2 · Tier 2 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmptyFilePolicy { Report, Skip }
@@ -1394,7 +1414,7 @@ A file input left empty arrives as a file part with `filename=""` and no data. `
 
 `#31` · P2 · Tier 2 · 0.3 · core
 
-```rust
+```rust,ignore
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TokenField { /* name: &'static str, placement */ }
 
@@ -1435,7 +1455,7 @@ Hooks let other crates take part in a parse without a second pass: customs-sec i
 
 `#52` · P0 · Tier 3 · 0.4 · core (`failed`: `#66`, P2)
 
-```rust
+```rust,ignore
 pub trait Inspector {
     fn part_start(&mut self, head: &PartHead<'_>) -> Verdict { Verdict::Continue }
     fn sniff(&mut self, head: &PartHead<'_>, first: &[u8]) -> Verdict { Verdict::Continue }
@@ -1451,7 +1471,7 @@ Every method has a default, so an inspector implements only what it checks.
 
 **Order guarantee** (FR-55), per part, at every split of the input:
 
-```
+```text
 part_start ─▶ sniff (file parts, when sniff_bytes > 0) ─▶ data* ─▶ field (text fields) ─▶ part_end
 ... after the last part: end
 ... on any error, at any point: failed (once), then the error is returned
@@ -1506,7 +1526,7 @@ impl Inspector for ImagesOnly {
 
 `#52` (`Verdict`, `NoInspector`) 0.4 · `#73` (`Refusal`) 0.3 · P0 · Tier 3 · core
 
-```rust
+```rust,ignore
 #[must_use]
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1537,7 +1557,7 @@ impl<I: Inspector + ?Sized> Inspector for Box<I> {}   // D-088, alloc: a chain c
 
 `#53` · P1 · Tier 3 · 0.4 · core (`MemorySink`: `alloc`)
 
-```rust
+```rust,ignore
 pub trait Sink {
     type Output;
     fn open(&mut self, head: &PartHead<'_>) -> Result<(), FormError>;
@@ -1566,7 +1586,7 @@ A custom sink can send uploads anywhere: to an object store, to a worker pool th
 
 `#54` · P2 · Tier 3 · 0.4 · `alloc`
 
-```rust
+```rust,ignore
 pub struct Driver<B, S: Sink> { /* parser, sink, text buffer, sniff buffer, state */ }
 
 impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
@@ -1602,7 +1622,7 @@ Spilling is blocking file I/O. A server with an event loop runs the parse on a t
 
 `#10` · P1 · Tier 1 · 0.4 · `fs`
 
-```rust
+```rust,ignore
 pub fn read_multipart<R: std::io::Read>(content_type: &[u8], body: R) -> Result<Upload, FormError>;
 ```
 
@@ -1613,12 +1633,23 @@ The blocking convenience for small servers and tools: reads `body` to the end in
 **Cost:** parser throughput plus disk speed for spilled files; one 64 KiB read buffer.
 
 ```rust
-let mut upload = form_net::read_multipart(content_type, request.body_reader())?;
+# let content_type = b"multipart/form-data; boundary=X";
+# let documents_dir = std::env::temp_dir();
+# let new_id = || format!("form-net-api-read-{}.pdf", std::process::id());
+// Any std::io::Read: a socket, a file, a server's request body.
+let request_body = &b"--X\r\n\
+Content-Disposition: form-data; name=\"document\"; filename=\"q3.pdf\"\r\n\
+Content-Type: application/pdf\r\n\r\n\
+%PDF-1.7 ...\r\n\
+--X--\r\n"[..];
+
+let mut upload = form_net::read_multipart(content_type, request_body)?;
 let title = upload.field("title").unwrap_or("untitled").to_owned();
 if let Some(file) = upload.take_file("document") {
     println!("{} bytes, declared {:?}", file.len(), file.content_type().map(|t| t.raw()));
     file.persist(&documents_dir.join(new_id()))?;     // the caller builds the path
 }
+# std::fs::remove_file(documents_dir.join(new_id())).unwrap();
 # Ok::<(), form_net::FormError>(())
 ```
 
@@ -1626,7 +1657,7 @@ if let Some(file) = upload.take_file("document") {
 
 `#12` (`temp`, `memory_only`) P1 Tier 1 · `#37` (`in_dir` and setters) P1 Tier 2 · `#38` (`cleanup_failures`) P2 · `#68` (`stats`) P2 · `#71` (`memory_bound`) P2 0.5 · 0.4 · `fs`
 
-```rust
+```rust,ignore
 pub struct Store { /* shared: Arc<StoreShared> (directory, settings, counters, budget) */ }
 
 impl Store {
@@ -1640,7 +1671,7 @@ impl Store {
     pub fn dir(&self) -> Option<&std::path::Path>;
     pub fn cleanup_failures(&self) -> u64;
     pub fn stats(&self) -> StoreStats;
-    pub fn memory_bound(&self, limits: &Limits) -> u64;     // 0.5
+    pub fn memory_bound(&self, limits: &Limits) -> u64;     // 0.5, D-093
     pub fn sink(&self, limits: &Limits) -> StoreSink;
 }
 ```
@@ -1671,10 +1702,14 @@ let store = Store::temp()?;
 
 // A document service that keeps large uploads: named files so `persist` is a link, not a copy,
 // on a volume of their own, with a shared 2 GiB budget across all requests.
-let store = Store::in_dir("/srv/uploads/incoming")?
+# let incoming = std::env::temp_dir().join(format!("form-net-api-store-{}", std::process::id()));
+# std::fs::create_dir_all(&incoming).unwrap();
+let store = Store::in_dir(&incoming)?                  // for example /srv/uploads/incoming
     .mode(SpillMode::Named)
     .memory_threshold(256 * 1024)
-    .quota(SpillQuota::new(2 << 30));                  // 0.5
+    .quota(SpillQuota::new(2 << 30));
+# drop(store);
+# std::fs::remove_dir_all(&incoming).unwrap();
 # Ok::<(), form_net::FormError>(())
 ```
 
@@ -1682,7 +1717,7 @@ let store = Store::in_dir("/srv/uploads/incoming")?
 
 `#37` · P1 · Tier 2 · 0.4 · `fs`
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum SpillMode {
@@ -1706,7 +1741,7 @@ Every file is created with `create_new` (fails if the path exists and never foll
 
 `#68` · P2 · Tier 2 · 0.4 · `fs`
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StoreStats {
@@ -1725,7 +1760,7 @@ A snapshot of what the store holds now, for metrics and health checks, read from
 
 `#37` · P1 · Tier 3 · 0.4 · `fs`
 
-```rust
+```rust,ignore
 pub struct StoreSink { /* store reference, request counters, current file */ }
 impl Sink for StoreSink { type Output = StoredFile; /* ... */ }
 ```
@@ -1736,7 +1771,7 @@ The `Sink` a `Store` hands out for one request (`Store::sink`). It enforces `max
 
 `#13` · P1 · Tier 1 · 0.4 · `fs`
 
-```rust
+```rust,ignore
 #[must_use]
 pub struct StoredFile { /* field name, file name, content type, length, location, reservation */ }
 
@@ -1780,6 +1815,9 @@ One received file, in memory or in a temporary file.
 ```rust
 use std::io::Read;
 
+# let body = &b"--X\r\nContent-Disposition: form-data; name=\"document\"; filename=\"q3.pdf\"\r\n\r\n%PDF-1.7 ...\r\n--X--\r\n"[..];
+# let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", body)?;
+# let dest = std::env::temp_dir().join(format!("form-net-api-stored-{}.pdf", std::process::id()));
 let file = upload.file("document").unwrap();
 let mut first = [0u8; 8];
 file.reader()?.read_exact(&mut first)?;
@@ -1788,7 +1826,8 @@ if file.len() <= 64 * 1024 {
 }
 let mut upload = upload;
 let file = upload.take_file("document").unwrap();
-file.persist(std::path::Path::new("/srv/docs/2026/10/7f3a.pdf"))?;
+file.persist(&dest)?;                                 // for example /srv/docs/2026/10/7f3a.pdf
+# std::fs::remove_file(&dest)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -1796,11 +1835,12 @@ file.persist(std::path::Path::new("/srv/docs/2026/10/7f3a.pdf"))?;
 
 `#11` · P1 · Tier 1 · 0.4 · `fs` (`iter`: `#70`; `parse_with`: `#36`, Tier 2)
 
-```rust
+```rust,ignore
 #[must_use]
 pub struct Upload { /* text arena, text spans, files: Vec<StoredFile>, token */ }
 
 impl Upload {
+    pub fn from_form(form: Form, policy: &Policy) -> Result<Upload, FormError>; // 0.5, D-098
     pub fn field(&self, name: &str) -> Option<&str>;
     pub fn field_one(&self, name: &str) -> Result<Option<&str>, FormError>;
     pub fn fields<'u>(&'u self, name: &'u str) -> impl Iterator<Item = &'u str> + 'u;
@@ -1835,10 +1875,17 @@ The result of a completed multipart parse with storage. Text values are owned, c
 ```rust
 use form_net::{Limits, NoInspector, Policy, Store, TokenField, Upload};
 
+# let content_type = b"multipart/form-data; boundary=X";
+# let body_reader = &b"--X\r\nContent-Disposition: form-data; name=\"csrf_token\"\r\n\r\ntok\r\n--X--\r\n"[..];
+# // Stand-ins for csrf-sec's verifier and the request's session.
+# struct Csrf;
+# impl Csrf { fn verify(&self, token: &str, _session: &()) -> bool { token == "tok" } }
+# let (csrf, session) = (Csrf, &());
 let store = Store::temp()?;
 let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf_token"));
 let upload = Upload::parse_with(content_type, body_reader, &Limits::DEFAULT, &policy, &store, &mut NoInspector)?;
 let verified = upload.captured_token().is_some_and(|token| csrf.verify(token, session));
+# assert!(verified);
 # Ok::<(), form_net::FormError>(())
 ```
 
@@ -1846,7 +1893,7 @@ let verified = upload.captured_token().is_some_and(|token| csrf.verify(token, se
 
 `#35` · P1 · Tier 2 · 0.4 · `fs`
 
-```rust
+```rust,ignore
 pub struct UploadSession { /* driver over a StoreSink, text arena, files */ }
 
 impl UploadSession {
@@ -1867,9 +1914,12 @@ The push-style form for event-driven servers: the server hands each body chunk t
 ```rust
 use form_net::{Limits, NoInspector, Policy, Store, UploadSession};
 
+# let store = Store::temp()?;
+# let content_type = b"multipart/form-data; boundary=X";
+# let body = b"--X\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"beach.jpg\"\r\n\r\n\xff\xd8\xff...\r\n--X--\r\n";
 let mut session = UploadSession::new(content_type, &Limits::DEFAULT, &Policy::DEFAULT, &store)?;
-while let Some(chunk) = next_body_chunk() {
-    session.push(&chunk, &mut NoInspector)?;
+for chunk in body.chunks(16) {                         // each chunk as the server reads it
+    session.push(chunk, &mut NoInspector)?;
 }
 let upload = session.finish(&mut NoInspector)?;
 # Ok::<(), form_net::FormError>(())
@@ -1879,7 +1929,7 @@ let upload = session.finish(&mut NoInspector)?;
 
 `#67` (`SpillBudget`) P2 Tier 3 · `#39` (`SpillQuota`, `Store::quota`) P2 Tier 2 · 0.5 · `fs`
 
-```rust
+```rust,ignore
 pub trait SpillBudget: Send + Sync + 'static {
     fn reserve(&self, bytes: u64) -> bool;
     fn release(&self, bytes: u64);
@@ -1920,7 +1970,7 @@ assert_eq!(quota.in_use(), 0);
 
 `#40` · P2 · Tier 2 · 0.5 · `fs`
 
-```rust
+```rust,ignore
 pub fn sweep(dir: &std::path::Path, older_than: core::time::Duration) -> Result<usize, FormError>;
 ```
 
@@ -1929,7 +1979,12 @@ Removes files named `upload-*.part`, and nothing else, directly inside `dir`, wh
 **Errors:** `Store { NotADirectory }`, `Io { kind }`.
 
 ```rust
-let removed = form_net::sweep(std::path::Path::new("/srv/uploads/incoming"), std::time::Duration::from_secs(3600))?;
+# let incoming = std::env::temp_dir().join(format!("form-net-api-sweep-{}", std::process::id()));
+# std::fs::create_dir_all(&incoming).unwrap();
+// `incoming` is the store's directory, for example /srv/uploads/incoming.
+let removed = form_net::sweep(&incoming, std::time::Duration::from_secs(3600))?;
+# assert_eq!(removed, 0);
+# std::fs::remove_dir_all(&incoming).unwrap();
 # Ok::<(), form_net::FormError>(())
 ```
 
@@ -1941,7 +1996,7 @@ let removed = form_net::sweep(std::path::Path::new("/srv/uploads/incoming"), std
 
 `#34` · P1 · Tier 2 · 0.4 · `std` (`save`: `fs`)
 
-```rust
+```rust,ignore
 pub struct MultipartReader<R: std::io::Read> { /* parser, 64 KiB read buffer, reader */ }
 
 impl<R: std::io::Read> MultipartReader<R> {
@@ -1984,10 +2039,12 @@ A pull-style blocking API, synchronous and free of any runtime: ask for the next
 **Cost:** one 64 KiB read buffer; parser throughput.
 
 ```rust
+# let content_type = b"multipart/form-data; boundary=X";
+# let body_reader = &b"--X\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"beach.jpg\"\r\n\r\n\xff\xd8\xff...\r\n--X--\r\n"[..];
 let mut reader = form_net::MultipartReader::new(content_type, body_reader)?;
 while let Some(mut part) = reader.next_part()? {
     if part.head().view().is_file() {
-        let mut out = std::fs::File::create(scratch_path())?;
+        let mut out = Vec::new();                            // or a File, a socket
         let copied = std::io::copy(&mut part, &mut out)?;    // a parse error arrives as InvalidData
     } else {
         let value = part.text()?;
@@ -2007,6 +2064,8 @@ Plain Rust structs filled from a form, without serde and without a procedural ma
 `#15` · P1 · Tier 1 · 0.4 · `alloc`
 
 ```rust
+use form_net::FromForm;
+
 form_net::form! {
     /// The sign-up form.
     #[derive(Debug)]
@@ -2022,7 +2081,11 @@ form_net::form! {
     ignore = ["csrf_token", "_charset_"];
 }
 
+# let content_type = b"application/x-www-form-urlencoded";
+# let body = b"email=a%40b.example&password=hunter2&age=30&newsletter=on&tags[]=rust&tags[]=web&csrf_token=t";
 let signup = Signup::from_body(content_type, body)?;
+# assert_eq!((signup.age, signup.newsletter, signup.tags.len()), (30, true, 2));
+# Ok::<(), form_net::FormError>(())
 ```
 
 **Behaviour**
@@ -2038,7 +2101,10 @@ let signup = Signup::from_body(content_type, body)?;
 **Cost:** nothing beyond `FromForm`; compile time grows linearly with the field count.
 
 ```rust
+use form_net::FromForm;
+
 form_net::form! {
+    #[derive(Debug)]
     pub struct Search {
         pub q: String,
         pub page: Option<u32>,
@@ -2059,7 +2125,7 @@ assert!(Search::from_query(b"page=2").is_err());          // `q` is required
 
 `#14` (provided methods) P1 Tier 1 · `#61` (`from_query`) P1 Tier 1 · `#62` (`from_body*`) P1 Tier 1 and 2 · 0.4 · `alloc` (`from_upload`: `fs`)
 
-```rust
+```rust,ignore
 pub trait FromForm: Sized {
     type Builder: FormBuilder<Output = Self> + Default;
 
@@ -2070,6 +2136,9 @@ pub trait FromForm: Sized {
     fn from_body(content_type: &[u8], body: &[u8]) -> Result<Self, FormError>;
     #[cfg(feature = "fs")]
     fn from_upload(upload: Upload) -> Result<Self, FormError>;
+    #[cfg(feature = "fs")]
+    fn from_upload_mut(upload: &mut Upload) -> Result<Self, FormError>;            // 0.5, D-090
+    fn from_body_all(content_type: &[u8], body: &[u8]) -> Result<Self, FormErrors>; // 0.5, D-090
 
     // Tier 2, provided
     fn from_urlencoded_with(input: &[u8], limits: &Limits, policy: &Policy) -> Result<Self, FormError>;
@@ -2082,7 +2151,24 @@ pub trait FromForm: Sized {
         policy: &Policy,
         inspector: &mut I,
     ) -> Result<Self, FormError>;
+    fn from_body_all_with(content_type: &[u8], body: &[u8], limits: &Limits, policy: &Policy)
+        -> Result<Self, FormErrors>;                                                 // 0.5
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormErrors { /* Vec<FormError> */ }                                       // 0.5
+impl FormErrors {
+    pub fn iter(&self) -> impl Iterator<Item = &FormError>;
+    pub fn len(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
+    pub fn first(&self) -> Option<&FormError>;
+    pub fn field(&self, name: &str) -> Option<ExtractError>;
+    pub fn unknown(&self) -> usize;
+    pub fn status_hint(&self) -> u16;
+}
+impl From<FormError> for FormErrors {}
+impl core::fmt::Display for FormErrors {}
+impl std::error::Error for FormErrors {}
 ```
 
 Every method feeds each field to a fresh `Builder` in input order and then calls `finish`.
@@ -2091,6 +2177,8 @@ Every method feeds each field to a fresh `Builder` in input order and then calls
 - `from_multipart` parses a buffered multipart body; file fields receive [`FileValue::Buffered`](#filevalue).
 - `from_body` reads the `Content-Type` and does either: the one call a handler needs when it does not care which encoding the form used. Which encodings a route accepts is the route's decision (customs-sec checks the declared content type before the body is read); a route that accepts only one calls `from_urlencoded` or `from_multipart`.
 - `from_upload` takes a finished `Upload`; file fields receive `FileValue::Stored`, moving the `StoredFile` into the struct.
+- `from_upload_mut` leaves the upload usable (D-090): text is read by reference, and only files under declared names are moved out; files under `ignore = [..]` names stay for the caller. Unknown names are refused as in `from_upload`; on error, files already moved are dropped (deleted).
+- `from_body_all` collects every field's error instead of stopping at the first, for showing a form again with a message beside each field: one error per received value that fails and one per unknown name, plus `Missing` for an absent field unless that field already has an error. A parse error stops the parse and is then the only error (D-097).
 - `from_body_inspected` is the single-pass form for content inspection: the inspector and the struct see the same bytes in one parse.
 
 **Errors:** the parser's errors; `Extract { reason, field }` (see [`ExtractError`](#reason-enums)).
@@ -2101,16 +2189,19 @@ Every method feeds each field to a fresh `Builder` in input order and then calls
 
 `#56` · P1 · Tier 3 · 0.4 · `alloc`
 
-```rust
+```rust,ignore
 pub trait FormBuilder {
     type Output;
     fn text(&mut self, name: &str, value: &str) -> Result<(), FormError>;
     fn file(&mut self, name: &str, file: FileValue<'_>) -> Result<(), FormError>;
     fn finish(self) -> Result<Self::Output, FormError>;
+    // 0.5, provided:
+    fn file_field(&self, name: &str) -> Option<bool> { Some(true) }
+    fn finish_all(self, errors: &mut Vec<FormError>) -> Option<Self::Output> where Self: Sized;
 }
 ```
 
-What `form!` generates, and what a hand-written `FromForm` implementation provides. A builder reports problems as `FormError::Extract { reason, field }`.
+What `form!` generates, and what a hand-written `FromForm` implementation provides. `file_field` says whether a file name is declared (`Some(true)`), ignored (`Some(false)`), or unknown (`None`), for `from_upload_mut`; `finish_all` records every field's error for `from_body_all`. `form!` implements both; the defaults treat every name as declared and record the one error `finish` returns. A builder reports problems as `FormError::Extract { reason, field }`.
 
 ```rust
 use form_net::{ExtractError, FileValue, FormBuilder, FormError, FromForm};
@@ -2141,7 +2232,7 @@ impl FromForm for Query { type Builder = LastQ; }
 
 `#56` · P1 · Tier 3 · 0.4 · `alloc`
 
-```rust
+```rust,ignore
 pub trait FromField: Sized {
     type Slot: Default;
     fn accept_text(slot: &mut Self::Slot, value: &str) -> Result<(), ValueError> {
@@ -2187,7 +2278,7 @@ impl FromField for Slug {
 
 `#56` · P1 · Tier 3 · 0.4 · `alloc`
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 pub enum FileValue<'a> {
     Buffered(&'a Part<'a>),
@@ -2222,7 +2313,7 @@ Text given to a file field is `ExpectedFile`, and a file given to a text field i
 
 `#16` · P1 · Tier 1 · 0.4 · `alloc`
 
-```rust
+```rust,ignore
 pub struct Secret { /* String */ }
 
 impl Secret {
@@ -2245,7 +2336,7 @@ For passwords and other secret fields. No `Display`, no `Clone` (a clone is a se
 
 `#17` · P1 · Tier 1 · 0.4 · `alloc`
 
-```rust
+```rust,ignore
 pub struct FileData { /* bytes: Vec<u8>, filename: Option<String>, content_type: Option<String> */ }
 
 impl FileData {
@@ -2272,7 +2363,7 @@ For services that send forms: outbound HTTP clients, webhooks, tests.
 
 `#42` · P2 · Tier 2 · 0.5 · `std` (`new`: `random`)
 
-```rust
+```rust,ignore
 pub struct MultipartWriter<W: std::io::Write> { /* out, boundary, matcher, state */ }
 
 impl<W: std::io::Write> MultipartWriter<W> {
@@ -2294,12 +2385,12 @@ Writes a `multipart/form-data` body as browsers do (FR-64 to FR-66).
 
 - `new` generates a boundary (see `Boundary::generate`); `with_boundary` uses the caller's. `content_type` is the exact header value to send: `multipart/form-data; boundary=...`.
 - Each part is `--boundary CRLF`, the `Content-Disposition` line, an optional `Content-Type` line, a blank line, the data, and `CRLF`; `finish` writes the close delimiter `--boundary-- CRLF` and returns the writer.
-- Names and file names are escaped as browsers do: LF, CR, and `"` become `%0A`, `%0D`, `%22`, nothing else. Any other control byte except HTAB in a name or file name is refused (`Syntax { ControlInHeader }`), so is a name or file name that ends with `\` (it would read as `\"` before the closing quote: `Syntax { AmbiguousQuote }`), and a `Content-Type` value must pass parse-net's media-type grammar (`Syntax { InvalidContentType }`), so no CR, LF, or NUL can reach the output and **every body the writer produces parses back with form-net to the same fields**.
+- Names and file names are escaped as browsers do: LF, CR, and `"` become `%0A`, `%0D`, `%22`, nothing else. Every input that would read back differently is refused before a byte of its part is written (D-092): any other control byte except HTAB (`Syntax { ControlInHeader }`); an empty name (`Syntax { EmptyName }`); any backslash in a name (form-net refuses one, D-082), a file name that ends with `\` (it would read as `\"` before the closing quote), and a literal `%0A`, `%0D`, or `%22` in either (a reader decodes it) (`Syntax { AmbiguousQuote }`); a `Content-Type` value that fails parse-net's media-type grammar, repeats a parameter, or is `multipart/*` (`Syntax { InvalidContentType }`); a `_charset_` field naming anything but UTF-8 or US-ASCII (`Encoding { UnsupportedCharset }`). So no CR, LF, or NUL can reach a header and **every body the writer produces parses back with form-net to the same fields**, under limits that admit its sizes (`max_name_bytes` and `max_filename_bytes` count the escaped bytes, so each CR, LF, and `"` counts three).
 - Text values have their line breaks normalized to CRLF, as browsers do (a lone CR or LF becomes CRLF).
 - With a caller boundary, every data chunk goes through the same streaming matcher the parser uses, across chunk splits, and data that contains the delimiter is refused (`Syntax { BoundaryInContent }`). With a generated boundary the scan is skipped (128 random bits make a collision negligible) unless `verify_boundary(true)` is set.
-- `file_data` outside a file part, or any call after an error, is `Poisoned`.
+- `file_data` outside a file part, or any call after an error, is `Poisoned`. A refusal of a head writes nothing of that part; a `BoundaryInContent` or `Io` error can come after part of the data was written, so after any error the output is incomplete and must be discarded.
 
-**Errors:** `Syntax { BoundaryInContent | ControlInHeader | AmbiguousQuote | InvalidContentType }`; `Io { kind }` from the writer; `Random` from `new`; `Poisoned`.
+**Errors:** `Syntax { BoundaryInContent | ControlInHeader | EmptyName | AmbiguousQuote | InvalidContentType }`; `Encoding { UnsupportedCharset }`; `Io { kind }` from the writer; `Random` from `new`; `Poisoned`.
 
 **Cost:** writes go straight to `out`; head encoding under 100 ns per part [est.]; the boundary scan about 0.1 to 0.3 ns per byte when on [est.].
 
@@ -2307,7 +2398,7 @@ Writes a `multipart/form-data` body as browsers do (FR-64 to FR-66).
 let mut body = Vec::new();
 let mut w = form_net::MultipartWriter::new(&mut body)?;
 w.text("title", "Holiday")?;
-w.file("photo", "beach.jpg", Some("image/jpeg"), std::fs::File::open("beach.jpg")?)?;
+w.file("photo", "beach.jpg", Some("image/jpeg"), &b"\xff\xd8\xff..."[..])?;   // any std::io::Read, such as a File
 let content_type = w.content_type();
 w.finish()?;
 
@@ -2320,7 +2411,7 @@ assert_eq!(mp.field("title"), Some("Holiday"));
 
 `#43` · P2 · Tier 2 · 0.5 · `random`
 
-```rust
+```rust,ignore
 impl Boundary {
     pub fn generate() -> Result<Boundary, FormError>;
 }
@@ -2334,7 +2425,7 @@ impl Boundary {
 
 `#55` · P2 · Tier 3 · 0.5 · core
 
-```rust
+```rust,ignore
 pub fn encode_part_head(
     boundary: &Boundary,
     first: bool,
@@ -2365,7 +2456,7 @@ assert_eq!(&out[..n], b"--X\r\nContent-Disposition: form-data; name=\"a%22b\"\r\
 
 `#18` · P0 · Tier 1 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormError {
@@ -2412,7 +2503,7 @@ One error type for the whole crate. It is `Copy` and holds no input bytes, no pa
 
 `#57` · P0 · Tier 3 · 0.3 · core
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Location {
@@ -2431,7 +2522,7 @@ Where an error was found: the multipart part index (from 0) when inside a part, 
 
 `#57` · P0 · Tier 3 · 0.3 · core (`StoreError`: 0.4, `fs`)
 
-```rust
+```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Limit {

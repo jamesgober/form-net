@@ -199,5 +199,24 @@ fn test_attack_t20_t21_file_names_are_never_paths() {
             "{raw:?} -> {s:?}"
         );
     }
-    // NFC normalization of file names is the 0.5 `unicode` feature.
+}
+
+#[cfg(all(feature = "fs", feature = "unicode"))]
+#[test]
+fn test_attack_t21_nfd_names_sanitize_like_nfc() {
+    let name = |raw: &str| {
+        let body = format!(
+            "--X\r\nContent-Disposition: form-data; name=f; filename=\"{raw}\"\r\n\r\n\r\n--X--"
+        );
+        let mp = form_net::parse_multipart(CT, body.as_bytes()).unwrap();
+        let f = mp.file("f").unwrap().filename().unwrap();
+        (f.nfc().unwrap(), f.sanitized().unwrap())
+    };
+    let (nfc_nfd, san_nfd) = name("cafe\u{301}.txt");
+    let (nfc_nfc, san_nfc) = name("caf\u{e9}.txt");
+    assert_eq!(
+        (nfc_nfd.as_str(), san_nfd.as_str()),
+        ("caf\u{e9}.txt", "caf\u{e9}.txt")
+    );
+    assert_eq!((nfc_nfc, san_nfc), (nfc_nfd, san_nfd));
 }

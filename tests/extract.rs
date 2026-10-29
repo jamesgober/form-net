@@ -283,3 +283,141 @@ mod stored {
         ));
     }
 }
+
+mod all_errors {
+    use form_net::{ExtractError, FormError, FromForm};
+
+    form_net::form! {
+        #[derive(Debug)]
+        pub struct Profile {
+            pub name: String,
+            pub age: u8,
+            pub tags: Vec<u16>,
+            pub avatar: Option<form_net::FileData>,
+        }
+        ignore = ["csrf"];
+    }
+
+    #[test]
+    fn test_every_field_error_is_reported_once() {
+        let e = Profile::from_body_all(
+            b"application/x-www-form-urlencoded",
+            b"age=x&age=2&tags=1&tags=no&evil=1&csrf=t",
+        )
+        .unwrap_err();
+        assert_eq!(e.field("name"), Some(ExtractError::Missing));
+        assert_eq!(
+            e.field("age"),
+            Some(ExtractError::Invalid("not a whole number"))
+        );
+        assert_eq!(
+            e.field("tags")
+                .map(|r| matches!(r, ExtractError::Invalid(_))),
+            Some(true)
+        );
+        assert_eq!(e.unknown(), 1);
+        // age: invalid, then a second value (duplicate is not reported for a
+        // slot that never filled); no Missing on top of its Invalid.
+        assert_eq!(
+            e.iter()
+                .filter(|x| matches!(
+                    x,
+                    FormError::Extract {
+                        field: Some("age"),
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(!format!("{e} {e:?}").contains("evil"));
+    }
+
+    #[test]
+    fn test_parse_errors_stop_and_success_is_ok() {
+        let e = Profile::from_body_all(b"application/x-www-form-urlencoded", b"a=%zz").unwrap_err();
+        assert_eq!(e.len(), 1);
+        assert!(matches!(e.first(), Some(FormError::Encoding { .. })));
+        assert_eq!(
+            Profile::from_body_all(b"text/plain", b"")
+                .unwrap_err()
+                .first(),
+            Some(&FormError::UnsupportedMediaType)
+        );
+        let ok = Profile::from_body_all(
+            b"application/x-www-form-urlencoded",
+            b"name=Ada&age=36&tags=1&tags=2",
+        )
+        .unwrap();
+        assert_eq!(
+            (ok.name.as_str(), ok.age, ok.tags.as_slice()),
+            ("Ada", 36, &[1u16, 2][..])
+        );
+        let ct = b"multipart/form-data; boundary=X";
+        let body = b"--X\r\nContent-Disposition: form-data; name=avatar\r\n\r\ntext\r\n--X\r\nContent-Disposition: form-data; name=name; filename=a\r\n\r\nf\r\n--X--";
+        let e = Profile::from_body_all(ct, body).unwrap_err();
+        assert_eq!(e.field("avatar"), Some(ExtractError::WrongKind));
+        assert_eq!(e.field("name"), Some(ExtractError::WrongKind));
+        assert_eq!(e.field("age"), Some(ExtractError::Missing));
+    }
+}
+
+#[cfg(feature = "fs")]
+mod upload_mut {
+    use form_net::{ExtractError, FormError, FromForm};
+
+    form_net::form! {
+        pub struct Doc { pub title: String, pub file: form_net::StoredFile }
+        ignore = ["extra"];
+    }
+
+    #[test]
+    fn test_unknown_files_are_refused_and_ignored_ones_stay() {
+        let ct = b"multipart/form-data; boundary=X";
+        let ok = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nT\r\n--X\r\nContent-Disposition: form-data; name=extra; filename=e\r\n\r\nE\r\n--X\r\nContent-Disposition: form-data; name=file; filename=f\r\n\r\nF\r\n--X--";
+        let mut up = form_net::read_multipart(ct, &ok[..]).unwrap();
+        let d = Doc::from_upload_mut(&mut up).unwrap();
+        assert_eq!((d.title.as_str(), up.file_count()), ("T", 1));
+        assert_eq!(up.file("extra").unwrap().read_to_vec(8).unwrap(), b"E");
+        let bad = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nT\r\n--X\r\nContent-Disposition: form-data; name=other; filename=o\r\n\r\nO\r\n--X--";
+        let mut up = form_net::read_multipart(ct, &bad[..]).unwrap();
+        assert!(matches!(
+            Doc::from_upload_mut(&mut up),
+            Err(FormError::Extract {
+                reason: ExtractError::Unknown,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_one_owned_type_for_both_encodings() {
+        use form_net::{Policy, TokenField, Upload};
+        let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf"));
+        let form = form_net::parse_urlencoded(b"title=T&x=1&csrf=tok").unwrap();
+        let up = Upload::from_form(form, &policy).unwrap();
+        assert_eq!(
+            (up.field("title"), up.field("x"), up.file_count()),
+            (Some("T"), Some("1"), 0)
+        );
+        assert_eq!(
+            up.captured_token(),
+            Some("tok"),
+            "the same as a multipart parse"
+        );
+        let twice = form_net::parse_urlencoded(b"csrf=a&csrf=b").unwrap();
+        assert!(matches!(
+            Upload::from_form(twice, &policy),
+            Err(FormError::Policy {
+                reason: form_net::PolicyRefusal::DuplicateToken,
+                ..
+            })
+        ));
+        let none = Upload::from_form(
+            form_net::parse_urlencoded(b"a=1").unwrap(),
+            &Policy::DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(none.captured_token(), None);
+    }
+}

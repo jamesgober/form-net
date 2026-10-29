@@ -70,7 +70,8 @@
 //! first bytes of every file, and every field before anything is stored;
 //! a [`Sink`] that decides where file bytes go, driven by the [`Driver`]; the
 //! allocation-free core ([`raw_pairs`], [`decode_into`], [`encode_into`],
-//! [`Boundary`], [`MultipartParser`]), which builds without `alloc`.
+//! [`UrlencodedParser`], [`Boundary`], [`MultipartParser`],
+//! [`encode_part_head`]), which builds without `alloc`.
 //!
 //! ## Features
 //!
@@ -78,15 +79,15 @@
 //! |---|---|---|
 //! | (none) | | the allocation-free core; `no_std` without `alloc` |
 //! | `alloc` | | owned results, the Tier 1 functions, `form!`, `Driver`, `MemorySink` |
-//! | `std` | yes | `MultipartReader`, `FormError::Io`, `FormError::Random`; implies `alloc` |
-//! | `random` | | the OS random source; implies `std` |
-//! | `fs` | | `Store`, `StoredFile`, `Upload`, `UploadSession`, `read_multipart`, `FileName::sanitized`; implies `random` |
+//! | `std` | yes | `MultipartReader`, `MultipartWriter`, `FormError::Io`, `FormError::Random`; implies `alloc` |
+//! | `random` | | `Boundary::generate`, `MultipartWriter::new`; implies `std` |
+//! | `fs` | | `Store`, `StoredFile`, `Upload`, `UploadSession`, `read_multipart`, `SpillQuota`, `sweep`, `FileName::sanitized`; implies `random` |
+//! | `unicode` | | `FileName::nfc`, and NFC in `FileName::sanitized`; implies `alloc` |
 //!
 //! The full contract is `docs/API.md` in the
-//! [repository](https://github.com/jamesgober/form-net). This release
-//! (0.4) adds upload storage, inspection hooks, blocking readers, and typed
-//! extraction to the 0.3 core; the multipart writer, the shared disk budget,
-//! and `sweep` arrive in 0.5.
+//! [repository](https://github.com/jamesgober/form-net), with
+//! `docs/ARCHITECTURE.md` and `docs/PLATFORM-NOTES.md`. This release (0.5)
+//! is feature complete.
 
 #![no_std]
 #![doc(html_root_url = "https://docs.rs/form-net")]
@@ -124,21 +125,28 @@ mod io;
 mod kind;
 mod limits;
 mod multipart;
+#[cfg(feature = "random")]
+mod random;
 mod scan;
 #[cfg(feature = "fs")]
 mod store;
 mod urlencoded;
 mod wipe;
 
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use alloc::vec::Vec as __Vec;
 pub use error::{
     EncodingError, ExtractError, FormError, Limit, Location, PolicyRefusal, SyntaxError,
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use extract::{__unknown, __value_error};
+pub use extract::{__push_field_error, __unknown, __value_error};
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-pub use extract::{FileData, FileValue, FormBuilder, FromField, FromForm, Secret, ValueError};
+pub use extract::{
+    FileData, FileValue, FormBuilder, FormErrors, FromField, FromForm, Secret, ValueError,
+};
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use hook::MemorySink;
@@ -159,6 +167,10 @@ pub use multipart::owned_head::OwnedPartHead;
 pub use multipart::parser::{
     Charset, ContentType, Event, Headers, MultipartParser, PartHead, PartKind, PartSummary, Step,
 };
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub use multipart::writer::MultipartWriter;
+pub use multipart::writer::encode_part_head;
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use multipart::{
@@ -170,6 +182,7 @@ pub use urlencoded::encode::encode_into;
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use urlencoded::encode::{Serializer, serialize_urlencoded};
 pub use urlencoded::raw::{RawPair, RawPairs, raw_pairs};
+pub use urlencoded::stream::{UrlencodedEvent, UrlencodedParser, UrlencodedStep};
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use urlencoded::{
@@ -183,8 +196,8 @@ pub use io::{MultipartReader, PartReader};
 #[cfg(feature = "fs")]
 #[cfg_attr(docsrs, doc(cfg(feature = "fs")))]
 pub use store::{
-    SpillMode, Store, StoreError, StoreSink, StoreStats, StoredFile, StoredReader, Upload,
-    UploadSession, read_multipart,
+    SpillBudget, SpillMode, SpillQuota, Store, StoreError, StoreSink, StoreStats, StoredFile,
+    StoredReader, Upload, UploadSession, read_multipart, sweep,
 };
 
 /// Crate version string, populated by Cargo at build time.
@@ -231,3 +244,9 @@ mod tests {
         }
     }
 }
+
+/// Every example of `docs/API.md`, compiled and run as a doctest (D-100).
+/// They use every feature, so they run with `--all-features`.
+#[cfg(all(doctest, feature = "fs", feature = "unicode"))]
+#[doc = include_str!("../docs/API.md")]
+struct ApiExamples;

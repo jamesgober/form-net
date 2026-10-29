@@ -295,6 +295,87 @@ impl Limits {
         add_usize(add_usize(self.name() as usize, self.value() as usize), 1)
     }
 
+    /// The worst-case bytes one parse with these limits can hold in memory,
+    /// for admission control before a body is read (FR-40, D-093).
+    ///
+    /// The sum of: parser state (256); the parser buffer and the driver's
+    /// copy of the current part head (each `multipart_buffer_len` under the
+    /// most demanding policy); the sniff window; the field being received
+    /// (`max_value_bytes`); the text kept (`max_text_bytes`) and its names
+    /// (`max_fields × max_name_bytes`, capped by `max_body_bytes`); 96 bytes
+    /// of index per field and 320 per part; owned copies of part names, file
+    /// names, and content types (`max_parts × max_part_header_bytes`, capped
+    /// by `max_body_bytes`); the files kept in memory,
+    /// `max_files × min(file_in_memory_bytes, max_file_bytes)`, capped by
+    /// twice `max_body_bytes` (a buffer that grew by doubling can hold twice
+    /// its bytes); and half the largest growing buffer (a buffer that
+    /// doubles holds its old half while it moves). `file_in_memory_bytes`
+    /// is the most bytes of one file a store keeps in memory
+    /// (`Store::memory_bound` passes it). The caller's own read buffer is
+    /// not included. All values are effective values; the arithmetic
+    /// saturates. `tests/memory_bound.rs` measures it against hostile bodies.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::Limits;
+    ///
+    /// const LOGIN: Limits = Limits::DEFAULT
+    ///     .with_max_body_bytes(4 * 1024)
+    ///     .with_max_fields(8)
+    ///     .with_max_parts(8)
+    ///     .with_max_files(0)
+    ///     .with_max_part_header_bytes(1024);
+    /// assert!(LOGIN.memory_bound(64 * 1024) < 32 * 1024);
+    /// // The defaults with files over 64 KiB spilled: about 6.5 MiB.
+    /// assert!(Limits::DEFAULT.memory_bound(64 * 1024) < 7 << 20);
+    /// ```
+    #[must_use]
+    pub const fn memory_bound(&self, file_in_memory_bytes: u64) -> u64 {
+        const PARSER_STATE: u64 = 256;
+        const FIELD_INDEX: u64 = 96;
+        const PART_INDEX: u64 = 320;
+        let head = (self.max_part_header_bytes as u64)
+            .saturating_add(self.name() as u64)
+            .saturating_add(self.filename() as u64)
+            .saturating_add(self.token() as u64)
+            .saturating_add(CHARSET_CAPTURE as u64);
+        let parts = self.max_parts as u64;
+        let copies = min_u64(
+            parts.saturating_mul(self.max_part_header_bytes as u64),
+            self.body(),
+        );
+        let sniff = min_u64(self.sniff_bytes as u64, self.file());
+        let file = min_u64(file_in_memory_bytes, self.file());
+        let files = min_u64(
+            (self.max_files as u64).saturating_mul(file),
+            self.body().saturating_mul(2),
+        );
+        let text = self.text_and_names();
+        let growth = if file > text { file } else { text } / 2;
+        PARSER_STATE
+            .saturating_add(head.saturating_mul(2))
+            .saturating_add(sniff)
+            .saturating_add(self.value() as u64)
+            .saturating_add(text)
+            .saturating_add((self.max_fields as u64).saturating_mul(FIELD_INDEX))
+            .saturating_add(parts.saturating_mul(PART_INDEX))
+            .saturating_add(copies)
+            .saturating_add(files)
+            .saturating_add(growth)
+    }
+
+    /// The text values and field names one body can hold: `max_text_bytes`
+    /// plus `max_fields × max_name_bytes`, the latter capped by
+    /// `max_body_bytes` (effective values).
+    pub(crate) const fn text_and_names(&self) -> u64 {
+        let names = min_u64(
+            (self.max_fields as u64).saturating_mul(self.name() as u64),
+            self.body(),
+        );
+        self.text().saturating_add(names)
+    }
+
     // Effective values: each capped by the limit that contains it.
 
     pub(crate) const fn body(&self) -> u64 {

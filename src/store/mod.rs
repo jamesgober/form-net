@@ -5,7 +5,12 @@
 //! that stores uploads where blocking is allowed, or gives the driver its
 //! own [`Sink`](crate::Sink).
 
+mod quota;
+mod sweep;
 mod temp;
+
+pub use quota::{SpillBudget, SpillQuota};
+pub use sweep::sweep;
 
 use alloc::borrow::ToOwned;
 use alloc::string::String;
@@ -180,6 +185,7 @@ pub struct Store {
     threshold: u64,
     max_disk: Option<u64>,
     mode: SpillMode,
+    budget: Option<Arc<dyn SpillBudget>>,
 }
 
 impl fmt::Debug for Store {
@@ -188,6 +194,7 @@ impl fmt::Debug for Store {
             .field("memory_only", &self.memory_only)
             .field("threshold", &self.threshold)
             .field("mode", &self.mode)
+            .field("quota", &self.budget.is_some())
             .field("stats", &self.stats())
             .finish_non_exhaustive()
     }
@@ -211,6 +218,7 @@ impl Store {
             threshold: DEFAULT_THRESHOLD,
             max_disk: None,
             mode: SpillMode::Anonymous,
+            budget: None,
         }
     }
 
@@ -318,13 +326,63 @@ impl Store {
         }
     }
 
+    /// Adds a disk budget shared across requests (and across stores given
+    /// the same budget): bytes are reserved from it before every disk write,
+    /// and a request that would cross it is refused with
+    /// `Store { QuotaExceeded }` (status hint 503). Replaces an earlier one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, NoInspector, Policy, SpillQuota, Store, Upload};
+    ///
+    /// let quota = SpillQuota::new(4);
+    /// let store = Store::temp()?.memory_threshold(0).quota(quota.clone());
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a\r\n\r\n12345\r\n--X--";
+    /// let e = Upload::parse_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store, &mut NoInspector).unwrap_err();
+    /// assert_eq!(e.status_hint(), 503);
+    /// assert_eq!(quota.in_use(), 0, "the refused file gave its bytes back");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
+    pub fn quota(mut self, budget: impl SpillBudget) -> Store {
+        self.budget = Some(Arc::new(budget));
+        self
+    }
+
+    /// The worst-case bytes one request through this store can hold in
+    /// memory under `limits`: [`Limits::memory_bound`] with this store's
+    /// memory threshold (`u64::MAX` for a memory-only store).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Store};
+    ///
+    /// let limits = Limits::DEFAULT;
+    /// assert!(Store::temp()?.memory_bound(&limits) < Store::memory_only().memory_bound(&limits));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
+    #[must_use]
+    pub fn memory_bound(&self, limits: &Limits) -> u64 {
+        let in_memory = if self.memory_only {
+            u64::MAX
+        } else {
+            self.threshold
+        };
+        limits.memory_bound(in_memory)
+    }
+
     /// The `Sink` that stores the files of one request under `limits`.
     #[must_use]
     pub fn sink(&self, limits: &Limits) -> StoreSink {
         StoreSink {
+            budget: self.budget.clone(),
             shared: Arc::clone(&self.shared),
             memory_only: self.memory_only,
             threshold: self.threshold,
+            // A memory file never holds more than this: its buffer is
+            // capped here, so `memory_bound` is exact.
+            memory_cap: usize::try_from(self.threshold.min(limits.file())).unwrap_or(usize::MAX),
             mode: self.mode,
             max_disk: self.max_disk.unwrap_or(limits.max_body_bytes),
             used_disk: 0,
@@ -347,9 +405,11 @@ struct Current {
 
 /// The [`Sink`] a [`Store`] hands out for one request.
 pub struct StoreSink {
+    budget: Option<Arc<dyn SpillBudget>>,
     shared: Arc<Shared>,
     memory_only: bool,
     threshold: u64,
+    memory_cap: usize,
     mode: SpillMode,
     max_disk: u64,
     used_disk: u64,
@@ -388,7 +448,23 @@ impl StoreSink {
         let Some((file, _)) = cur.disk.as_mut() else {
             return Ok(());
         };
-        file.write_all(bytes).map_err(|e| temp::io(&e))?;
+        let n = bytes.len() as u64;
+        if let Some(budget) = &self.budget {
+            if !budget.reserve(n) {
+                return Err(FormError::Store {
+                    reason: StoreError::QuotaExceeded,
+                });
+            }
+        }
+        if let Err(e) = file.write_all(bytes) {
+            // Reserved, never written: give the bytes back now. (A partial
+            // write is removed with the file on abort, which releases only
+            // `on_disk`.)
+            if let Some(budget) = &self.budget {
+                budget.release(n);
+            }
+            return Err(temp::io(&e));
+        }
         self.used_disk = used;
         cur.on_disk = cur.on_disk.saturating_add(bytes.len() as u64);
         add(&self.shared.counters.bytes_on_disk, bytes.len() as u64);
@@ -445,7 +521,7 @@ impl Sink for StoreSink {
         if on_disk {
             self.disk_write(chunk)?;
         } else if let Some(cur) = self.current.as_mut() {
-            crate::wipe::append_wiping(&mut cur.memory, chunk, 4096, usize::MAX);
+            crate::wipe::append_wiping(&mut cur.memory, chunk, 4096, self.memory_cap);
         }
         if let Some(cur) = self.current.as_mut() {
             cur.len = new_len;
@@ -457,6 +533,7 @@ impl Sink for StoreSink {
         let Some(mut cur) = self.current.take() else {
             return Err(FormError::Poisoned);
         };
+        let on_disk = cur.disk.is_some();
         let place = match cur.disk.take() {
             Some((file, path)) => Place::Disk {
                 file: Some(file),
@@ -475,6 +552,8 @@ impl Sink for StoreSink {
             len: cur.len,
             place,
             shared: Some(Arc::clone(&self.shared)),
+            budget: if on_disk { self.budget.clone() } else { None },
+            reserved: cur.on_disk,
         })
     }
 
@@ -488,6 +567,9 @@ impl Sink for StoreSink {
                 drop(file);
                 sub(&self.shared.counters.files_on_disk, 1);
                 sub(&self.shared.counters.bytes_on_disk, cur.on_disk);
+                if let Some(budget) = &self.budget {
+                    budget.release(cur.on_disk);
+                }
                 if let Some(p) = path {
                     if std::fs::remove_file(&p).is_err() {
                         self.shared.cleanup_failed();
@@ -540,6 +622,9 @@ pub struct StoredFile {
     len: u64,
     place: Place,
     shared: Option<Arc<Shared>>,
+    /// The budget this file's disk bytes were reserved from.
+    budget: Option<Arc<dyn SpillBudget>>,
+    reserved: u64,
 }
 
 impl fmt::Debug for StoredFile {
@@ -567,6 +652,8 @@ impl StoredFile {
             len: bytes.len() as u64,
             place: Place::Memory(bytes.to_vec()),
             shared: None,
+            budget: None,
+            reserved: 0,
         }
     }
 
@@ -706,6 +793,7 @@ impl StoredFile {
                     let p = p.clone();
                     self.place = Place::Gone;
                     self.release();
+                    self.release_budget();
                     if std::fs::remove_file(&p).is_err() {
                         if let Some(s) = &self.shared {
                             s.cleanup_failed();
@@ -746,6 +834,13 @@ impl StoredFile {
             let _ = std::fs::remove_file(dest);
         }
         copied
+    }
+
+    /// Gives the file's disk bytes back to the shared budget, once.
+    fn release_budget(&mut self) {
+        if let Some(budget) = self.budget.take() {
+            budget.release(self.reserved);
+        }
     }
 
     /// Takes the file off the store's counters.
@@ -796,12 +891,19 @@ impl Drop for StoredFile {
                 };
                 self.release();
                 drop(file);
+                let mut freed = true;
                 if let Some(p) = path {
                     if std::fs::remove_file(&p).is_err() {
+                        freed = false;
                         if let Some(s) = &self.shared {
                             s.cleanup_failed();
                         }
                     }
+                }
+                // Only space that is free again goes back to the budget: a
+                // file that could not be removed still uses its bytes.
+                if freed {
+                    self.release_budget();
                 }
             }
             Place::Gone => {}
@@ -977,6 +1079,53 @@ impl Upload {
         core::mem::take(&mut self.files)
     }
 
+    /// One owned type for both encodings (D-090, D-098): the fields of a
+    /// urlencoded form as an upload with no files, so a server keeps one
+    /// `Upload` per request whatever the `Content-Type`. The policy's token
+    /// field is captured as a multipart parse would capture it, so
+    /// [`captured_token`](Self::captured_token) means the same for both.
+    /// The form is wiped as it drops.
+    ///
+    /// # Errors
+    ///
+    /// `Policy { DuplicateToken }` when the token field appears twice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Policy, TokenField, Upload};
+    ///
+    /// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf"));
+    /// let form = form_net::parse_urlencoded(b"email=a%40b.example&csrf=t0k&tag=x&tag=y")?;
+    /// let upload = Upload::from_form(form, &policy)?;
+    /// assert_eq!(upload.field("email"), Some("a@b.example"));
+    /// assert_eq!(upload.captured_token(), Some("t0k"));
+    /// assert_eq!((upload.fields("tag").count(), upload.file_count()), (2, 0));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
+    pub fn from_form(form: crate::Form, policy: &Policy) -> Result<Upload, FormError> {
+        let mut upload = Upload::default();
+        let token = policy.token_field.map(|t| t.name());
+        for (name, value) in form.iter() {
+            if Some(name) == token {
+                if upload.token.is_some() {
+                    return Err(FormError::policy(
+                        crate::error::PolicyRefusal::DuplicateToken,
+                        Location::NONE,
+                    ));
+                }
+                upload.token = Some(String::from(value));
+            }
+            upload.push_field(name, value.as_bytes(), usize::MAX);
+        }
+        Ok(upload)
+    }
+
+    /// The stored files, for extraction that moves some of them out.
+    pub(crate) fn files_mut(&mut self) -> &mut Vec<StoredFile> {
+        &mut self.files
+    }
+
     pub(crate) fn into_parts(mut self) -> (Upload, Vec<StoredFile>) {
         let files = core::mem::take(&mut self.files);
         (self, files)
@@ -1110,8 +1259,7 @@ impl UploadSession {
             driver: Driver::new(parser, store.sink(limits)),
             upload: Upload::default(),
             declared: None,
-            text_cap: usize::try_from(limits.max_text_bytes.saturating_mul(2))
-                .unwrap_or(usize::MAX),
+            text_cap: usize::try_from(limits.text_and_names()).unwrap_or(usize::MAX),
             ended: false,
             failed: false,
         })
@@ -1287,8 +1435,8 @@ impl FileName<'_> {
     /// controls) replaced by `_` (D-084), then passed through
     /// `path_lib::sanitize`, which replaces separators, control characters,
     /// Windows-reserved characters and device names, and trims trailing dots
-    /// and spaces. Unicode normalization is not applied; it arrives with the
-    /// `unicode` feature in 0.5. It is still a name the client chose: never let it
+    /// and spaces. With the `unicode` feature the name is put in Unicode NFC
+    /// first, so an NFD name from a macOS client sanitizes to the same bytes. It is still a name the client chose: never let it
     /// overwrite anything (`StoredFile::persist` refuses to).
     ///
     /// # Errors
@@ -1308,6 +1456,8 @@ impl FileName<'_> {
     pub fn sanitized(&self) -> Result<String, FormError> {
         let base = FileName::new(self.basename(), self.source());
         let text = base.html_unescaped()?;
+        #[cfg(feature = "unicode")]
+        let text = unicode_lang::normalize(text.as_ref(), unicode_lang::Form::Nfc);
         let text: &str = text.as_ref();
         if text.is_ascii() {
             return Ok(path_lib::sanitize(text));

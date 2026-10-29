@@ -9,6 +9,7 @@ pub(crate) mod header;
 #[cfg(feature = "alloc")]
 pub(crate) mod owned_head;
 pub(crate) mod parser;
+pub(crate) mod writer;
 
 #[cfg(feature = "alloc")]
 mod buffered {

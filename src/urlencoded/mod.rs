@@ -5,6 +5,7 @@
 pub(crate) mod decode;
 pub(crate) mod encode;
 pub(crate) mod raw;
+pub(crate) mod stream;
 
 #[cfg(feature = "alloc")]
 mod owned {

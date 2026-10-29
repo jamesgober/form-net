@@ -186,6 +186,174 @@ pub trait FormBuilder {
     ///
     /// `Extract { Missing | Invalid, .. }`.
     fn finish(self) -> Result<Self::Output, FormError>;
+
+    /// What a file under `name` is to the struct: `Some(true)` a declared
+    /// field, `Some(false)` an ignored name, `None` an unknown one.
+    /// `FromForm::from_upload_mut` (feature `fs`) moves only declared files out of the
+    /// upload. The default says every name is declared.
+    fn file_field(&self, name: &str) -> Option<bool> {
+        let _ = name;
+        Some(true)
+    }
+
+    /// As [`finish`](Self::finish), but records every field's error in
+    /// `errors` instead of stopping at the first; `None` when any field
+    /// failed. The default records the one error `finish` returns.
+    fn finish_all(self, errors: &mut alloc::vec::Vec<FormError>) -> Option<Self::Output>
+    where
+        Self: Sized,
+    {
+        match self.finish() {
+            Ok(v) => Some(v),
+            Err(e) => {
+                errors.push(e);
+                None
+            }
+        }
+    }
+}
+
+/// Every problem with one submitted form, for showing the form again with
+/// a message beside each field: what
+/// [`FromForm::from_body_all`] returns.
+///
+/// A parse error (a malformed body, a limit) stops the parse, so it is the
+/// only error; extraction errors are collected for every field, at most one
+/// per received value plus one per missing field. No value is ever kept.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{ExtractError, FromForm};
+///
+/// form_net::form! {
+///     #[derive(Debug)]
+///     pub struct Signup { pub email: String, pub age: u8, pub tos: bool }
+/// }
+///
+/// let errors = Signup::from_body_all(b"application/x-www-form-urlencoded", b"age=300&role=admin").unwrap_err();
+/// assert_eq!(errors.len(), 3);
+/// assert_eq!(errors.field("age"), Some(ExtractError::Invalid("out of range")));
+/// assert_eq!(errors.field("email"), Some(ExtractError::Missing));
+/// assert_eq!(errors.unknown(), 1);
+/// assert_eq!(errors.status_hint(), 422);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormErrors(alloc::vec::Vec<FormError>);
+
+impl FormErrors {
+    /// Every error, in the order found.
+    pub fn iter(&self) -> impl Iterator<Item = &FormError> {
+        self.0.iter()
+    }
+
+    /// How many errors.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether there are none (never true for a returned value).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The first error.
+    #[must_use]
+    pub fn first(&self) -> Option<&FormError> {
+        self.0.first()
+    }
+
+    /// The first extraction error for the field with this Rust name.
+    #[must_use]
+    pub fn field(&self, name: &str) -> Option<ExtractError> {
+        self.0.iter().find_map(|e| match e {
+            FormError::Extract {
+                reason,
+                field: Some(f),
+            } if *f == name => Some(*reason),
+            _ => None,
+        })
+    }
+
+    /// How many received names the struct neither declares nor ignores.
+    #[must_use]
+    pub fn unknown(&self) -> usize {
+        self.0
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    FormError::Extract {
+                        reason: ExtractError::Unknown,
+                        ..
+                    }
+                )
+            })
+            .count()
+    }
+
+    /// The status hint of the first error (422 for extraction errors).
+    #[must_use]
+    pub fn status_hint(&self) -> u16 {
+        self.first().map_or(422, FormError::status_hint)
+    }
+}
+
+impl From<FormError> for FormErrors {
+    fn from(e: FormError) -> FormErrors {
+        FormErrors(alloc::vec![e])
+    }
+}
+
+impl core::fmt::Display for FormErrors {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.first() {
+            Some(e) if self.0.len() > 1 => {
+                write!(f, "{e} (and {} more)", self.0.len().saturating_sub(1))
+            }
+            Some(e) => write!(f, "{e}"),
+            None => f.write_str("no errors"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for FormErrors {}
+
+/// Feeds a builder and keeps going after extraction errors, recording them.
+struct Collect<'e, B> {
+    inner: B,
+    errors: &'e mut alloc::vec::Vec<FormError>,
+}
+
+impl<B: FormBuilder> FormBuilder for Collect<'_, B> {
+    type Output = B::Output;
+
+    fn text(&mut self, name: &str, value: &str) -> Result<(), FormError> {
+        match self.inner.text(name, value) {
+            Err(e @ FormError::Extract { .. }) => {
+                self.errors.push(e);
+                Ok(())
+            }
+            other => other,
+        }
+    }
+
+    fn file(&mut self, name: &str, file: FileValue<'_>) -> Result<(), FormError> {
+        match self.inner.file(name, file) {
+            Err(e @ FormError::Extract { .. }) => {
+                self.errors.push(e);
+                Ok(())
+            }
+            other => other,
+        }
+    }
+
+    fn finish(self) -> Result<B::Output, FormError> {
+        self.inner.finish()
+    }
 }
 
 /// The bytes the decoders use without allocating.
@@ -396,6 +564,104 @@ pub trait FromForm: Sized {
         result
     }
 
+    /// From either encoding, collecting every field's error instead of
+    /// stopping at the first (D-090), so a form can be shown again with a
+    /// message beside each field.
+    ///
+    /// # Errors
+    ///
+    /// [`FormErrors`]: the parse error alone, or every extraction error.
+    fn from_body_all(content_type: &[u8], body: &[u8]) -> Result<Self, FormErrors> {
+        Self::from_body_all_with(content_type, body, &Limits::DEFAULT, &Policy::DEFAULT)
+    }
+
+    /// As [`from_body_all`](Self::from_body_all), with explicit limits and
+    /// policy.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_body_all`](Self::from_body_all); `InvalidLimits`.
+    fn from_body_all_with(
+        content_type: &[u8],
+        body: &[u8],
+        limits: &Limits,
+        policy: &Policy,
+    ) -> Result<Self, FormErrors> {
+        let mut errors = alloc::vec::Vec::new();
+        let mut b = Collect {
+            inner: Self::Builder::default(),
+            errors: &mut errors,
+        };
+        match FormKind::detect(content_type)? {
+            FormKind::Urlencoded => {
+                limits.validate()?;
+                feed_urlencoded(&mut b, body, limits, policy, &mut NoInspector)?;
+            }
+            FormKind::Multipart(_) => {
+                let mp = crate::parse_multipart_with(content_type, body, limits, policy)?;
+                feed_multipart(&mut b, &mp)?;
+            }
+        }
+        let Collect { inner, errors: _ } = b;
+        let value = inner.finish_all(&mut errors);
+        match value {
+            Some(v) if errors.is_empty() => Ok(v),
+            _ => Err(FormErrors(errors)),
+        }
+    }
+
+    /// From an upload that stays usable (D-090): text fields are read by
+    /// reference, and only the files the struct declares are moved out of
+    /// it; files under `ignore = [..]` names stay in the upload for the
+    /// caller. Unknown names are refused as in
+    /// [`from_upload`](Self::from_upload). On error, files already moved
+    /// into the builder are dropped (deleted).
+    ///
+    /// # Errors
+    ///
+    /// `Extract { .. }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::FromForm;
+    ///
+    /// form_net::form! {
+    ///     pub struct Post { pub title: String, pub cover: form_net::StoredFile }
+    ///     ignore = ["attachment"];
+    /// }
+    ///
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHi\r\n--X\r\nContent-Disposition: form-data; name=cover; filename=c.png\r\n\r\nC\r\n--X\r\nContent-Disposition: form-data; name=attachment; filename=a.pdf\r\n\r\nA\r\n--X--";
+    /// let mut upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let post = Post::from_upload_mut(&mut upload)?;
+    /// assert_eq!((post.title.as_str(), post.cover.len()), ("Hi", 1));
+    /// assert_eq!(upload.field("title"), Some("Hi"));
+    /// assert!(upload.file("cover").is_none() && upload.file("attachment").is_some());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
+    #[cfg(feature = "fs")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "fs")))]
+    fn from_upload_mut(upload: &mut crate::store::Upload) -> Result<Self, FormError> {
+        let mut b = Self::Builder::default();
+        for (name, value) in upload.iter() {
+            b.text(name, value)?;
+        }
+        let files = upload.files_mut();
+        let mut i = 0usize;
+        while let Some(file) = files.get(i) {
+            match b.file_field(file.name()) {
+                Some(true) => {
+                    let file = files.remove(i);
+                    let name = alloc::string::String::from(file.name());
+                    b.file(&name, FileValue::Stored(file))?;
+                }
+                Some(false) => i = i.wrapping_add(1),
+                None => return Err(__unknown()),
+            }
+        }
+        b.finish()
+    }
+
     /// From a finished upload: text fields as text, files moved into the
     /// struct as `StoredFile`s.
     ///
@@ -432,6 +698,22 @@ pub fn __value_error(e: ValueError, field: &'static str) -> FormError {
     FormError::Extract {
         reason,
         field: Some(field),
+    }
+}
+
+/// Records a field's error at `finish_all`, leaving out a `Missing` for a
+/// field that already failed when its value arrived. Not part of the API.
+#[doc(hidden)]
+pub fn __push_field_error(
+    errors: &mut alloc::vec::Vec<FormError>,
+    e: ValueError,
+    field: &'static str,
+) {
+    let seen = errors
+        .iter()
+        .any(|x| matches!(x, FormError::Extract { field: Some(f), .. } if *f == field));
+    if !(seen && e == ValueError::Missing) {
+        errors.push(__value_error(e, field));
     }
 }
 

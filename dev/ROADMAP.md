@@ -58,19 +58,19 @@ Exit: storage, crash, and abort tests green on Linux, macOS, and Windows; the ho
 - [x] Examples: `upload_to_disk`, `upload_session_push`, `typed_form`, `content_inspector`, `token_first`.
 - [x] Exit review of the `Inspector` and `FromForm` shapes against the customs-sec and web-net plans (both are scaffolds without form-net code yet): no blocker; inspector chaining (D-088) and lazy sink open (D-089) done in 0.4, Send and Sync asserted for every storage type, three additive shapes scheduled for 0.5 (D-090).
 
-## v0.5.0 - Feature complete
+## v0.5.0 - Feature complete (DONE 2026-10-26)
 
 Exit: every P0, P1, and P2 item exists, is documented with runnable examples, and is tested; the writer round-trip property is green.
 
-- [ ] Wire unicode-lang; feature `unicode`.
-- [ ] #23, #25, #39, #40, #42, #43, #47, #55, #67, #71.
-- [ ] `loom` model of `SpillQuota` (three threads: never over the limit, never negative, no lost release) and a CI job for it.
-- [ ] Tests: `writer.rs`, `memory_bound.rs` (peak-tracking allocator), `sweep` cases, attack tests T-7 (shared budget, parallel uploads), T-11 (named mode plus `sweep`), T-21 (NFD names with `unicode`), T-33, T-34, T-35.
-- [ ] Fuzz targets `fuzz_urlencoded_stream`, `fuzz_writer_roundtrip`.
-- [ ] `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`; `docs/API.md` complete with runnable examples.
-- [ ] Defence idea: a budget per tenant (PLAN 14).
-- [ ] Shapes from the 0.4 consumer review (D-090): `FromForm::from_upload_mut`, all-errors extraction, one owned accessor type for both encodings.
-- [ ] Example: `build_multipart_client`.
+- [x] Wire unicode-lang; feature `unicode` (D-099).
+- [x] #23, #25, #39, #40, #42, #43, #47, #55, #67, #71.
+- [x] `loom` model of `SpillQuota` (three threads: never over the limit, never negative, no lost release) and a CI job for it (D-096).
+- [x] Tests: `writer.rs`, `urlencoded_stream.rs`, `memory_bound.rs` (peak-tracking allocator), `concurrent_memory.rs` (T-33), `budget.rs` (T-7, `sweep`), T-11 in `crash.rs`, T-21 in `attacks_upload.rs`, T-34 and T-35 in `writer.rs`.
+- [x] Fuzz targets `fuzz_urlencoded_stream`, `fuzz_writer_roundtrip`.
+- [x] `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`; `docs/API.md` complete, its examples compiled and run as doctests (D-100).
+- [x] Defence idea: a budget per tenant (PLAN 14).
+- [x] Shapes from the 0.4 consumer review (D-090): `FromForm::from_upload_mut`, `from_body_all` with `FormErrors` (D-097), `Upload::from_form` (D-098).
+- [x] Example: `build_multipart_client`.
 
 ## v0.6.0 - Optimisation
 
