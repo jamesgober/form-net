@@ -184,4 +184,21 @@ Run on 2026-10-30, after D-113, D-114, and D-116. No mutant is now accepted by b
 
 ## Hardening runs
 
-HARDENING
+### Soak (NFR-15)
+
+`tests/soak.rs`, 14,400 seconds, release build, Linux (WSL2, kernel 6.6), Rust 1.99, run on 2026-10-30 on the code that ships. 64 sessions upload in a loop through one `Store` (memory threshold 16 KiB), with bodies of 0 bytes to 3 MiB and 20% of uploads dropped part way.
+
+| | result |
+|---|---|
+| uploads finished | 56,600,396 |
+| uploads dropped part way | 14,145,740 |
+| worst one-minute heap peak, first half / second half | 504.6 MB / 488.4 MB (the 64 sessions' work in flight, the test's own request bodies included) |
+| most files in the store directory at a sample, first half / second half | 39 / 41 |
+| most open handles at a sample, first half / second half | 68 / 71 |
+| heap left at the end | 10,240 B (the test's own bookkeeping; the bound is 64 KiB) |
+| files left at the end | 0 |
+| handles left at the end | the same as at the start |
+
+No growth: the second half's worst sample is within the first half's on every measure, and the process ends where it started.
+
+FUZZ
