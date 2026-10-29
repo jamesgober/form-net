@@ -5,7 +5,7 @@ use core::fmt;
 
 use crate::error::{EncodingError, FormError, Limit, Location, PolicyRefusal, SyntaxError};
 use crate::limits::{CHARSET_CAPTURE, EmptyFilePolicy, Limits, Policy, TokenPlacement};
-use crate::multipart::boundary::Boundary;
+use crate::multipart::boundary::{Boundary, Hit};
 use crate::multipart::filename::FileName;
 use crate::multipart::header::{Areas, BlockScan, HeadFacts, Text, read_block};
 
@@ -475,6 +475,9 @@ pub struct MultipartParser<B: AsMut<[u8]> + AsRef<[u8]>> {
     state: State,
     /// Delimiter bytes matched and not yet known to be data.
     k: u8,
+    /// Bytes of a lone CR or LF and `--boundary` matched (D-113); while
+    /// `k > 0` it follows from `k`.
+    bare: u8,
     flags: u8,
     token: Token,
     token_len: u16,
@@ -579,6 +582,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
             // The body may start with `--boundary`: start as if CRLF had
             // been seen.
             k: 2,
+            bare: 1,
             flags: 0,
             token: Token::NotSeen,
             token_len: 0,
@@ -635,6 +639,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
         self.boundary = boundary;
         self.state = State::Preamble;
         self.k = 2;
+        self.bare = 1;
         self.flags = 0;
         self.token = Token::NotSeen;
         self.token_len = 0;
@@ -795,12 +800,17 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     }
 
     fn at(&self, pos: usize) -> Location {
+        self.at_offset(self.bytes_seen.saturating_add(pos as u64))
+    }
+
+    /// As [`at`](Self::at), for an offset in the whole body.
+    fn at_offset(&self, offset: u64) -> Location {
         let part = if matches!(self.state, State::Preamble | State::Epilogue) {
             None
         } else {
             self.parts.checked_sub(1)
         };
-        Location::in_part(part, self.bytes_seen.saturating_add(pos as u64))
+        Location::in_part(part, offset)
     }
 
     /// Runs the state machine and returns positions only, so callers that
@@ -963,6 +973,20 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
         }
     }
 
+    /// The refusal for `--boundary` after a lone CR or LF, ending at `after`
+    /// in a `hay` that starts at `pos` in the input (D-113).
+    /// The location is the line break's, in whichever chunk it came.
+    fn bare_break(&self, after: usize, pos: usize) -> FormError {
+        let end = self
+            .bytes_seen
+            .saturating_add(pos.wrapping_add(after) as u64);
+        let bare = self.boundary.len().saturating_sub(1) as u64;
+        FormError::syntax(
+            SyntaxError::BoundaryInContent,
+            self.at_offset(end.saturating_sub(bare)),
+        )
+    }
+
     /// Scans the preamble. Returns the index in `hay` just after the first
     /// delimiter, or `None` when all of `hay` was consumed.
     fn preamble_step(&mut self, hay: &[u8]) -> Result<Option<usize>, FormError> {
@@ -971,10 +995,14 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
         let budget = self.limits.preamble().saturating_add(len);
         let room = usize::try_from(budget.saturating_sub(self.preamble)).unwrap_or(usize::MAX);
         let window = hay.get(..room.min(hay.len())).unwrap_or(hay);
-        let (k, found) = self.boundary.run(usize::from(self.k), window);
+        let (k, m, found) = self
+            .boundary
+            .run(usize::from(self.k), usize::from(self.bare), window);
         self.k = k as u8;
+        self.bare = m as u8;
         match found {
-            Some(after) => {
+            Hit::BareBreak(after) => Err(self.bare_break(after, 0)),
+            Hit::Delimiter(after) => {
                 // Real bytes up to the end of the delimiter; a delimiter that
                 // includes the two virtual bytes (CRLF) starts the body.
                 let end = self.preamble.saturating_add(after as u64);
@@ -986,9 +1014,10 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
                     ));
                 }
                 self.k = 0;
+                self.bare = 0;
                 Ok(Some(after))
             }
-            None => {
+            Hit::None => {
                 self.preamble = self.preamble.saturating_add(window.len() as u64);
                 if window.len() < hay.len() || self.preamble >= budget {
                     return Err(FormError::limit(
@@ -1059,6 +1088,9 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     ) -> Result<(), FormError> {
         self.state = State::Body;
         self.k = 0;
+        // The data starts after the blank line's LF: `--boundary` right
+        // there reads as an empty part to an RFC 2046 reader (D-113).
+        self.bare = 1;
         self.flags = 0;
         self.kind = facts.kind;
         self.part_bytes = 0;
@@ -1299,12 +1331,16 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
                     // The delimiter started inside the held bytes.
                     let data = k0.saturating_add(n).saturating_sub(len);
                     self.k = 0;
+                    self.bare = 0;
                     self.state = State::EndOfPart;
                     return self.emit_delimiter_bytes(data, pos.wrapping_add(n));
                 }
                 if k <= n {
-                    // Every held byte is data; scan the input again from 0.
+                    // Every held byte is data; scan the input again from 0,
+                    // with the bare-break state the held bytes leave: they
+                    // are a CR, a CR LF, or a CR LF and dashes (D-113).
                     self.k = 0;
+                    self.bare = k0.max(2).wrapping_sub(1) as u8;
                     return self.emit_delimiter_bytes(k0, pos);
                 }
             }
@@ -1320,16 +1356,18 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
             self.k = k as u8;
             return self.emit_delimiter_bytes(data, input_len);
         }
-        let (k, found) = self.boundary.run(0, hay);
+        let (k, m, found) = self.boundary.run(0, usize::from(self.bare), hay);
         match found {
-            Some(after) => {
+            Hit::BareBreak(after) => Err(self.bare_break(after, pos)),
+            Hit::Delimiter(after) => {
                 let data = after.saturating_sub(len);
                 self.k = 0;
+                self.bare = 0;
                 self.state = State::EndOfPart;
                 let bytes = hay.get(..data).unwrap_or(&[]);
                 self.emit_input_bytes(bytes, pos, pos.wrapping_add(data), pos.wrapping_add(after))
             }
-            None => {
+            Hit::None => {
                 if eof {
                     return Err(FormError::syntax(
                         SyntaxError::Truncated,
@@ -1337,6 +1375,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
                     ));
                 }
                 self.k = k as u8;
+                self.bare = m as u8;
                 let data_end = hay.len().saturating_sub(k);
                 let bytes = hay.get(..data_end).unwrap_or(&[]);
                 self.emit_input_bytes(bytes, pos, pos.wrapping_add(data_end), input_len)
@@ -1482,6 +1521,62 @@ mod tests {
                 buf.iter().position(|&b| b != 0)
             );
         }
+    }
+
+    /// Feeds `body` whole and returns the first error, or `None` at `End`.
+    #[cfg(feature = "alloc")]
+    fn run(p: &mut MultipartParser<alloc::vec::Vec<u8>>, body: &[u8]) -> Option<FormError> {
+        let mut rest = body;
+        loop {
+            match p.parse(rest, true) {
+                Err(e) => return Some(e),
+                Ok(step) => {
+                    rest = &rest[step.consumed..];
+                    if matches!(step.event, Event::End) {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// T-28, through the counter seam: counters set near `u64::MAX` never
+    /// wrap. Under finite limits they still refuse; under `u64::MAX` limits
+    /// they saturate and positions stay at the maximum.
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_attack_t28_counters_near_u64_max_never_wrap() {
+        let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\nvalue\r\n--X--";
+        let new = |limits: &Limits| {
+            MultipartParser::new(Boundary::new(b"X").unwrap(), limits, &Policy::DEFAULT).unwrap()
+        };
+        let mut p = new(&Limits::DEFAULT);
+        p.bytes_seen = u64::MAX - 4;
+        assert!(matches!(
+            run(&mut p, body),
+            Some(FormError::Limit {
+                limit: crate::error::Limit::Body,
+                ..
+            })
+        ));
+
+        let mut p = new(&Limits::DEFAULT);
+        p.text_total = u64::MAX - 2;
+        assert!(matches!(
+            run(&mut p, body),
+            Some(FormError::Limit {
+                limit: crate::error::Limit::TextTotal,
+                ..
+            })
+        ));
+
+        let open = Limits::DEFAULT
+            .with_max_body_bytes(u64::MAX)
+            .with_max_text_bytes(u64::MAX);
+        let mut p = new(&open);
+        p.bytes_seen = u64::MAX - 4;
+        assert!(run(&mut p, body).is_none());
+        assert_eq!(p.bytes_seen, u64::MAX);
     }
 
     #[test]

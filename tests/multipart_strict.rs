@@ -150,6 +150,46 @@ fn test_header_refusals() {
     );
 }
 
+/// D-113, D-114, D-116: the shapes the WAFFLED-style generator and the
+/// multer differential found other readers disagree on.
+#[test]
+fn test_differential_shapes_refused() {
+    for b in [
+        &b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\nv\n--X\r\nContent-Disposition: form-data; name=b\r\n\r\nw\r\n--X--"[..],
+        b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\nv\r--X--",
+        b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n--X--",
+        b"pre\n--X\r\nContent-Disposition: form-data; name=a\r\n\r\nv\r\n--X--",
+    ] {
+        assert_eq!(
+            syntax(b),
+            Some(SyntaxError::BoundaryInContent),
+            "{}",
+            String::from_utf8_lossy(b)
+        );
+    }
+    for head in [
+        "name='a'",
+        "name=a'",
+        "name=a; filename='f'",
+        "NAME=\"a\"",
+        "Name=a",
+        "name=\"a\"; Filename=\"f\"",
+    ] {
+        assert_eq!(
+            syntax(&one(
+                &format!("Content-Disposition: form-data; {head}"),
+                b""
+            )),
+            Some(SyntaxError::MalformedParameter),
+            "{head}"
+        );
+    }
+    // An apostrophe inside a name is an ordinary byte.
+    let body = one("Content-Disposition: form-data; name=it's", b"v");
+    let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", &body).unwrap();
+    assert_eq!(mp.field("it's"), Some("v"));
+}
+
 #[test]
 fn test_policy_refusals() {
     let d = Policy::DEFAULT;

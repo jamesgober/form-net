@@ -494,7 +494,8 @@ pub enum SyntaxError {
     /// The body ended without any delimiter.
     NoInitialDelimiter,
     /// A full delimiter followed by something other than `--`, padding, or
-    /// CRLF; or writer data that contains the delimiter.
+    /// CRLF; `--boundary` after a lone CR or LF, or as the first bytes of a
+    /// part's data (D-113); or writer data that contains any of these.
     BoundaryInContent,
     /// LF without CR where CRLF is required.
     BareLineFeed,

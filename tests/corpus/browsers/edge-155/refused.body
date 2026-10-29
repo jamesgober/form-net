@@ -1,0 +1,5 @@
+------WebKitFormBoundary3123NSKuUzR1llaN
+Content-Disposition: form-data; name="back\slash"
+
+backslash in the name, which form-net refuses (D-082)
+------WebKitFormBoundary3123NSKuUzR1llaN--

@@ -87,12 +87,13 @@ Exit: numbers published; no hot-path allocation; adversarial benchmarks linear; 
 
 Exit: every threat has a passing attack test; the soak shows no growth; the differential log has no open item.
 
-- [ ] Every fuzz target run 24 hours with no crash and no budget violation.
-- [ ] WAFFLED-style mutation corpus and generator (PLAN 12); multer differential triaged.
-- [ ] Attack tests T-1 to T-38 complete.
-- [ ] 4-hour soak (NFR-15).
-- [ ] Browser capture corpus (Chrome, Firefox, Safari) refreshed and green (NFR-14); client captures (curl, Python `requests`, Go).
-- [ ] `docs/SECURITY.md` complete.
+- [ ] Every fuzz target run 24 hours with no crash and no budget violation, on the code that ships (after D-113, D-114, D-116).
+- [x] WAFFLED-style mutation corpus and generator (PLAN 12, `tests/common/waffled.rs`); multer differential triaged (`docs/SECURITY.md`). They found three disagreements, fixed as D-113, D-114, D-116.
+- [x] Attack tests T-1 to T-38 complete (T-29 is the fuzzing).
+- [ ] 4-hour soak (NFR-15, `tests/soak.rs`), on the code that ships.
+- [ ] Browser capture corpus (Chrome, Firefox, Safari) refreshed and green (NFR-14); client captures (curl, Python `requests`, Go). Chrome 155, Edge 155, curl 8.5, requests 2.31, and Go 1.27 are captured and green (D-115). Firefox and Safari need a machine that has them: `python3 tools/capture/capture.py --browser <path>`, or no argument to open the page by hand.
+- [ ] `docs/SECURITY.md` complete: the threat model, the deviations, the corpus, and the differential log are in; the fuzz and soak results go in when they finish.
+- [ ] The multipart families measured again on a quiet machine after the D-113 matcher change, and the baseline committed. Measured under load (fuzzing and the soak running), every family passes; the 64 KiB avatar in 64 KiB and 1,500-byte chunks moved from 2.03x and 2.45x to 1.77x and 1.73x, which a quiet run must confirm or explain.
 
 ## v0.8.0 - Alpha
 

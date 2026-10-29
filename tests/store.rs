@@ -143,7 +143,7 @@ fn test_anonymous_files_have_no_name_on_unix() {
 
 #[cfg(unix)]
 #[test]
-fn test_permissions_are_owner_only() {
+fn test_attack_t10_permissions_are_owner_only() {
     use std::os::unix::fs::PermissionsExt;
     let store = Store::temp()
         .unwrap()
@@ -159,6 +159,24 @@ fn test_permissions_are_owner_only() {
     let path = up.file("f").unwrap().path().unwrap().to_owned();
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
+}
+
+/// On Windows the private directory sits in the user's own temporary
+/// directory, whose ACL admits only that user (and administrators).
+#[cfg(windows)]
+#[test]
+fn test_attack_t10_temp_directory_is_under_the_user_profile() {
+    let store = Store::temp().unwrap();
+    let profile = std::env::var_os("USERPROFILE").expect("USERPROFILE");
+    // Canonical forms, so an 8.3 short name in TEMP compares equal.
+    let profile = std::fs::canonicalize(profile).unwrap();
+    let dir = std::fs::canonicalize(store.dir().unwrap()).unwrap();
+    assert!(
+        dir.starts_with(&profile),
+        "{} not under {}",
+        dir.display(),
+        profile.display()
+    );
 }
 
 #[test]

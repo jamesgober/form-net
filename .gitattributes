@@ -4,10 +4,14 @@
 # `rustfmt.toml` pins `newline_style = "Unix"`.
 * text=auto eol=lf
 
+# Captured request bodies are kept byte for byte (CR LF included).
+/tests/corpus/** binary
+
 # Keep development-only paths out of `git archive` source tarballs.
 /.dev             export-ignore
 /.github          export-ignore
 /docs             export-ignore
 /tests            export-ignore
+/tools            export-ignore
 /.gitignore       export-ignore
 /.editorconfig    export-ignore

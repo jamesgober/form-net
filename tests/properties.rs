@@ -80,7 +80,7 @@ proptest! {
     }
 
     #[test]
-    fn prop_multipart_split_invariant(body in multipart_body(), a in 0usize..2000, b in 0usize..2000) {
+    fn test_attack_t32_split_invariant(body in multipart_body(), a in 0usize..2000, b in 0usize..2000) {
         let expected = common::drive(b"BB", &[&body], &Limits::DEFAULT, &Policy::DEFAULT);
         let (x, y) = (a.min(body.len()), b.min(body.len()));
         let (lo, hi) = (x.min(y), x.max(y));
