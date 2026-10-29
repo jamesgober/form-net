@@ -43,6 +43,9 @@ faster than the best of them on every benchmark of the plan but one input, a
   form's time wiping 9.6 KiB it never used. Every written byte is still
   wiped; tests over caller buffers prove it.
 - CI: a job keeps the benchmark crate building and its drivers agreeing.
+- The multipart differential fuzz target's reference parser skips bodies
+  over the default name, filename, part, and file limits; it had flagged
+  form-net's correct refusal of a 263-byte name as a disagreement.
 
 ---
 

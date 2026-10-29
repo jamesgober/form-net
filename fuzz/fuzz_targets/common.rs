@@ -123,12 +123,26 @@ pub fn reference(boundary: &[u8], body: &[u8]) -> Option<Vec<Record>> {
                 _ => return None,
             }
         }
+        // Inside the default limits only, so a refusal is always a
+        // disagreement. Value, file, text, and header sizes cannot be
+        // reached by a fuzz input.
+        let name = name?;
+        let limits = Limits::DEFAULT;
+        if name.len() > limits.max_name_bytes as usize
+            || filename.as_ref().is_some_and(|f| f.len() > limits.max_filename_bytes as usize)
+        {
+            return None;
+        }
         out.push(Record {
-            name: name?,
+            name,
             kind: if filename.is_some() { PartKind::File } else { PartKind::Field },
             filename,
             data: body[data_start..data_end].to_vec(),
         });
+        let files = out.iter().filter(|r| r.kind == PartKind::File).count();
+        if out.len() > limits.max_parts as usize || files > limits.max_files as usize {
+            return None;
+        }
         pos = data_end + delim.len();
     }
 }
