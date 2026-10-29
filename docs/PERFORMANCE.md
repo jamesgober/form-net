@@ -17,7 +17,7 @@ The plan's bar (PLAN 11.2): at least 20% faster than the best other Rust crate i
 | multipart buffered | multer 3.1.0, multipart 0.18.0 | 1.36x to 2.31x |
 | multipart to disk | multipart 0.18.0 | 2.09x |
 
-The one input below the bar is the search query `q=rust+form+parser&page=2`. Both crates spend most of its time allocating the one owned string that `+` decoding needs; form-net checks more on top (strict UTF-8, every limit). It is accepted as level rather than closed by weakening a check (`dev/PLAN.md` D-111).
+The one input below the bar is the search query `q=rust+form+parser&page=2`. Both crates spend most of its time allocating the one owned string that `+` decoding needs; form-net checks more on top (strict UTF-8, every limit). It is accepted as level rather than closed by weakening a check (`dev/PLAN.md` D-111), and is tried again in the polish pass before 1.0 (D-112).
 
 ---
 

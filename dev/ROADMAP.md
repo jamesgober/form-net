@@ -81,7 +81,7 @@ Exit: numbers published; no hot-path allocation; adversarial benchmarks linear; 
 - [x] Optimise against the measurements; record each change with its numbers (D-102 to D-105).
 - [x] `docs/PERFORMANCE.md`: results, method, machine, commands (D-106).
 - [x] The work-budget idea measured (PLAN 14, 0.2) and the first-bytes fingerprint idea (0.6) (D-107).
-- [x] The exit's bar, recorded per the exit rule: every family passes on every input except urlencoded to pairs on the 25-byte, two-field search query `q=rust+form+parser&page=2`, where form-net and form_urlencoded are level (0.88x collecting, 0.99x iterating, 1.04x with form-net's allocation-free decode; `docs/PERFORMANCE.md`). Why: both spend most of that input's time allocating the one owned string `+` decoding needs, and form-net checks more (strict UTF-8, every limit). James's decision (2026-10-29): accepted; the input stays level, since both crates make that one allocation, and no check is weakened to close it (D-111).
+- [x] The exit's bar, recorded per the exit rule: every family passes on every input except urlencoded to pairs on the 25-byte, two-field search query `q=rust+form+parser&page=2`, where form-net and form_urlencoded are level (0.88x collecting, 0.99x iterating, 1.04x with form-net's allocation-free decode; `docs/PERFORMANCE.md`). Why: both spend most of that input's time allocating the one owned string `+` decoding needs, and form-net checks more (strict UTF-8, every limit). James's decision (2026-10-29): accepted; the input stays level, since both crates make that one allocation, and no check is weakened to close it (D-111). It is tried again in the 0.9.0 polish pass (D-112).
 
 ## v0.7.0 - Hardening
 
@@ -102,7 +102,21 @@ Exit: the first site's form routes run on form-net in a test deployment; finding
 - [ ] API changes from that use are made now (the last chance before beta), each with a decision-log entry.
 - [ ] Defence idea: refusal digest (PLAN 14).
 
-## v0.9.0 - Beta and release candidates
+## v0.9.0 - Polish (before any release candidate)
+
+Exit: every item accepted, deferred, or missed earlier in the series has been tried again, and is now fixed or listed in the 1.0 readiness note for James with its numbers and the reason it stands. Nothing accepted mid-series becomes final without this pass (D-112).
+
+- [ ] Revisit every accepted gap, deferred item, known issue, and missed target in this file and in `dev/PLAN.md`'s decision log. Known now:
+  - urlencoded pairs on the 25-byte search query, level with form_urlencoded (D-111);
+  - the `FormKind::detect` estimate (114 ns measured against 100 ns), which sits in parse-net's media-type grammar;
+  - `parse_urlencoded` of ten fields at its 400 ns estimate (379 to 419 ns);
+  - the in-memory upload's drop cost, set by crypt-io's byte-at-a-time wipe;
+  - `FileName::sanitized` filtering default-ignorables itself until path-lib does (D-084).
+- [ ] A fresh performance pass against the competitors at their then-current versions: rerun `benches/`, commit a new baseline, and tune whatever moved.
+- [ ] The security and edge-case review run again over the whole crate, with every finding fixed test-first.
+- [ ] The 1.0 readiness note for James: whatever is still open after the three items above, with numbers and a recommendation for each.
+
+## v0.9.x - Beta and release candidates
 
 Exit: one release candidate with no change for two weeks of use by web-net and customs-sec.
 
