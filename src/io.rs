@@ -43,6 +43,8 @@ pub struct MultipartReader<R: Read> {
     reader: R,
     parser: MultipartParser<Vec<u8>>,
     buf: Vec<u8>,
+    /// The most of `buf` any read filled: only that is wiped.
+    buf_used: usize,
     start: usize,
     end: usize,
     eof: bool,
@@ -60,7 +62,7 @@ pub struct MultipartReader<R: Read> {
 
 impl<R: Read> Drop for MultipartReader<R> {
     fn drop(&mut self) {
-        crate::wipe::wipe_vec(&mut self.buf);
+        crate::wipe::wipe(self.buf.get_mut(..self.buf_used).unwrap_or(&mut []));
         crate::wipe::wipe_vec(&mut self.pending);
         if let Some(d) = self.declared.as_mut() {
             crate::wipe::wipe_vec(d);
@@ -112,6 +114,7 @@ impl<R: Read> MultipartReader<R> {
             reader,
             parser,
             buf: alloc::vec![0u8; READ_BUFFER],
+            buf_used: 0,
             start: 0,
             end: 0,
             eof: false,
@@ -148,10 +151,17 @@ impl<R: Read> MultipartReader<R> {
                 Ok(n) => {
                     self.start = 0;
                     self.end = n.min(self.buf.len());
+                    self.buf_used = self.buf_used.max(self.end);
                     return Ok(());
                 }
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(FormError::Io { kind: e.kind() }),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                    // A failed read may have written anywhere in the buffer.
+                    self.buf_used = self.buf.len();
+                }
+                Err(e) => {
+                    self.buf_used = self.buf.len();
+                    return Err(FormError::Io { kind: e.kind() });
+                }
             }
         }
     }

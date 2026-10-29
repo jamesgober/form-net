@@ -153,6 +153,26 @@ jobs:
         env:
           RUSTFLAGS: "-D warnings --cfg loom"
 
+  bench:
+    name: Benchmarks build and agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: benches
+      # The benchmark crate is its own workspace: the competitors it
+      # measures never enter form-net's tree. CI keeps it building and its
+      # drivers doing the same work; numbers come from a quiet machine
+      # (docs/PERFORMANCE.md), not from shared runners.
+      - name: Every driver does the same work
+        working-directory: benches
+        run: cargo test --release
+      - name: The benchmarks build
+        working-directory: benches
+        run: cargo bench --no-run
+
   package:
     name: Package
     runs-on: ubuntu-latest

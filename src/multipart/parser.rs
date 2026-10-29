@@ -483,6 +483,11 @@ pub struct MultipartParser<B: AsMut<[u8]> + AsRef<[u8]>> {
     scan: BlockScan,
     /// Header bytes copied into the buffer.
     copied: u32,
+    /// The longest header block read so far: every byte the parser writes
+    /// into the header, name, and file-name areas lies within this many
+    /// bytes of each area's start (decoding never lengthens), so the wipe
+    /// covers exactly what was written (D-103).
+    dirty: u32,
     parts: u32,
     files: u32,
     fields: u32,
@@ -581,6 +586,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
             charset_done: false,
             scan: BlockScan::default(),
             copied: 0,
+            dirty: 0,
             parts: 0,
             files: 0,
             fields: 0,
@@ -623,7 +629,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     /// Returns the parser to its initial state for a new body, wipes its
     /// buffer, and clears the poisoned state. It never allocates.
     pub fn reset(&mut self, boundary: Boundary) {
-        crate::wipe::wipe(self.buffer.as_mut());
+        self.wipe_used();
         let limits = self.limits;
         let policy = self.policy;
         self.boundary = boundary;
@@ -1006,6 +1012,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
             None => return Err(FormError::limit(Limit::PartHeaderBytes, at)),
         }
         self.copied = end as u32;
+        self.dirty = self.dirty.max(self.copied);
         Ok(())
     }
 
@@ -1023,6 +1030,11 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
         let limits = self.limits;
         let policy = self.policy;
         let copied = self.copied as usize;
+        let block_len = match source {
+            Source::Input(_) => end,
+            Source::Buffer => copied,
+        };
+        self.dirty = self.dirty.max(u32::try_from(block_len).unwrap_or(u32::MAX));
         let buf = self.buffer.as_mut();
         let (head, rest) = buf.split_at_mut(name_area.min(buf.len()));
         let (name, rest) =
@@ -1367,15 +1379,110 @@ enum BodyStep {
     Continue(usize),
 }
 
+impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
+    /// Wipes every byte the parser wrote into its buffer, and nothing more:
+    /// a buffer of the default size is 9.6 KiB, and a login form writes a
+    /// few hundred bytes of it (D-103).
+    fn wipe_used(&mut self) {
+        let used = self.dirty as usize;
+        let regions = [
+            (0, used.min(self.name_area())),
+            (
+                self.name_area(),
+                used.min(self.filename_area().saturating_sub(self.name_area())),
+            ),
+            (
+                self.filename_area(),
+                used.min(self.token_area().saturating_sub(self.filename_area())),
+            ),
+            (self.token_area(), usize::from(self.token_len)),
+            // The whole capture area: a second, shorter `_charset_` value
+            // resets the length over the tail of the first (found by review).
+            (self.charset_area(), CHARSET_CAPTURE),
+        ];
+        let buf = self.buffer.as_mut();
+        for (start, len) in regions {
+            if let Some(region) = buf.get_mut(start..start.saturating_add(len)) {
+                crate::wipe::wipe(region);
+            }
+        }
+        self.dirty = 0;
+    }
+}
+
 impl<B: AsMut<[u8]> + AsRef<[u8]>> Drop for MultipartParser<B> {
     fn drop(&mut self) {
-        crate::wipe::wipe(self.buffer.as_mut());
+        self.wipe_used();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D-103: the wipe covers every byte the parser wrote. With a caller
+    /// buffer the result is visible: after a body that writes every area
+    /// (header blocks, an escaped name, a decoded `filename*`, the token,
+    /// `_charset_`), dropping or resetting leaves the buffer all zeros.
+    #[test]
+    fn test_wipe_covers_every_area_written() {
+        let policy = Policy::DEFAULT
+            .with_extended_filename(crate::ExtendedFilenamePolicy::AcceptAlone)
+            .with_token_field(crate::TokenField::new("csrf"));
+        let limits = Limits::DEFAULT.with_max_part_header_bytes(512);
+        let long = "x".repeat(300);
+        let body = alloc::format!(
+            "--X\r\nContent-Disposition: form-data; name=csrf\r\n\r\nsecret-token-value\r\n\
+             --X\r\nContent-Disposition: form-data; name=_charset_\r\n\r\nUTF-8\r\n\
+             --X\r\nContent-Disposition: form-data; name=\"pass%22word\"\r\nX-Pad: {long}\r\n\r\nhunter2\r\n\
+             --X\r\nContent-Disposition: form-data; name=f; filename*=UTF-8''caf%C3%A9.txt\r\n\r\nfile\r\n--X--"
+        );
+        // Two `_charset_` values, the second shorter: the first one's tail
+        // must not survive (found by review).
+        let body = body.replace(
+            "name=_charset_\r\n\r\nUTF-8\r\n",
+            "name=_charset_\r\n\r\nunicode-1-1-utf-8\r\n--X\r\nContent-Disposition: form-data; name=_charset_\r\n\r\nutf8\r\n",
+        );
+        assert!(body.contains("unicode-1-1-utf-8"));
+        for split in [usize::MAX, 7, 1] {
+            let mut buf = alloc::vec![0u8; limits.multipart_buffer_len(&policy)];
+            {
+                let mut p = MultipartParser::with_buffer(
+                    Boundary::new(b"X").unwrap(),
+                    &limits,
+                    &policy,
+                    &mut buf[..],
+                )
+                .unwrap();
+                let bytes = body.as_bytes();
+                let chunks: alloc::vec::Vec<&[u8]> = bytes.chunks(split.min(bytes.len())).collect();
+                let mut ended = false;
+                for (i, c) in chunks.iter().enumerate() {
+                    let last = i + 1 == chunks.len();
+                    let mut rest = *c;
+                    loop {
+                        let step = p.parse(rest, last).unwrap();
+                        rest = &rest[step.consumed..];
+                        match step.event {
+                            Event::NeedInput => break,
+                            Event::End => {
+                                ended = true;
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                assert!(ended);
+                assert_eq!(p.captured_token(), Some("secret-token-value"));
+            }
+            assert!(
+                buf.iter().all(|&b| b == 0),
+                "split {split}: bytes left at {:?}",
+                buf.iter().position(|&b| b != 0)
+            );
+        }
+    }
 
     #[test]
     fn test_parser_size_is_bounded() {

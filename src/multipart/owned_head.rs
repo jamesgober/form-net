@@ -118,6 +118,10 @@ impl OwnedPartHead {
 
 impl Drop for OwnedPartHead {
     fn drop(&mut self) {
-        crate::wipe::wipe_vec(&mut self.buf);
+        // Only the length can hold head bytes: `copy_from` wipes the old
+        // bytes before every reuse and moves to a fresh buffer (wiping the
+        // old one) when it must grow, so the spare capacity, 9.6 KiB under
+        // the default limits, was never written (D-103).
+        crate::wipe::wipe(&mut self.buf);
     }
 }

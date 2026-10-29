@@ -815,6 +815,7 @@ impl StoredFile {
             .open(dest)
             .map_err(exists)?;
         let mut buf = [0u8; 64 * 1024];
+        let mut hi = 0usize;
         let mut pos = 0u64;
         let copied = loop {
             let n = match self.read_at(&mut buf, pos) {
@@ -822,12 +823,13 @@ impl StoredFile {
                 Ok(n) => n,
                 Err(e) => break Err(temp::io(&e)),
             };
+            hi = hi.max(n);
             if let Err(e) = out.write_all(buf.get(..n).unwrap_or(&[])) {
                 break Err(temp::io(&e));
             }
             pos = pos.saturating_add(n as u64);
         };
-        crate::wipe::wipe(&mut buf);
+        crate::wipe::wipe(buf.get_mut(..hi).unwrap_or(&mut []));
         if copied.is_err() {
             // Never leave a partial copy under the caller's name.
             drop(out);
@@ -1004,9 +1006,9 @@ impl Upload {
 
     fn push_field(&mut self, name: &str, value: &[u8], cap: usize) {
         let n0 = self.text.len();
-        crate::wipe::append_wiping(&mut self.text, name.as_bytes(), 64 * 1024, cap);
+        crate::wipe::append_wiping(&mut self.text, name.as_bytes(), 1024, cap);
         let v0 = self.text.len();
-        crate::wipe::append_wiping(&mut self.text, value, 64 * 1024, cap);
+        crate::wipe::append_wiping(&mut self.text, value, 1024, cap);
         self.spans.push(Span {
             name: (n0, name.len()),
             value: (v0, value.len()),
@@ -1178,12 +1180,16 @@ impl Upload {
         inspector: &mut I,
     ) -> Result<Upload, FormError> {
         let mut session = UploadSession::new(content_type, limits, policy, store)?;
-        let mut buf = crate::wipe::WipeVec(alloc::vec![0u8; 64 * 1024]);
+        let mut buf = crate::wipe::ReadBuf::new(64 * 1024);
         loop {
-            let n = match reader.read(&mut buf) {
+            let n = match reader.read(&mut buf.buf) {
                 Ok(n) => n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                    buf.failed();
+                    continue;
+                }
                 Err(e) => {
+                    buf.failed();
                     let err = temp::io(&e);
                     inspector.failed(&err);
                     return Err(err);
@@ -1192,7 +1198,8 @@ impl Upload {
             if n == 0 {
                 break;
             }
-            session.push(buf.get(..n).unwrap_or(&[]), inspector)?;
+            buf.filled(n);
+            session.push(buf.buf.get(..n).unwrap_or(&[]), inspector)?;
         }
         drop(buf);
         session.finish(inspector)

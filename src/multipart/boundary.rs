@@ -207,16 +207,30 @@ impl Boundary {
     /// Runs the matcher over `hay` from state `k`. Returns the final state
     /// and, when the delimiter completed, the index just after it.
     ///
-    /// From state 0 nothing before a CR can start a match (the delimiter
-    /// starts with CR), so those bytes are skipped eight at a time.
+    /// From state 0 a match can only start at a CR followed by LF: the
+    /// delimiter starts with CRLF, and the boundary cannot hold a CR. So the
+    /// search skips to the next CRLF eight positions at a time and compares
+    /// the delimiter there whole; a miss resumes two bytes on, past the LF.
+    /// Only near the end of `hay`, where the delimiter may continue into
+    /// the next chunk, does it step the automaton byte by byte, so the state
+    /// it returns is exactly the automaton's (D-102).
     pub(crate) fn run(&self, mut k: usize, hay: &[u8]) -> (usize, Option<usize>) {
         let len = self.len();
+        let delimiter = self.delimiter();
         let mut i = 0usize;
         while i < hay.len() {
             if k == 0 {
-                i = crate::scan::find_byte(hay, i, b'\r');
+                i = crate::scan::find_pair(hay, i, b'\r', b'\n');
                 if i >= hay.len() {
                     break;
+                }
+                if let Some(candidate) = hay.get(i..i.wrapping_add(len)) {
+                    // The last byte first: a near miss usually differs there.
+                    if candidate.last() == delimiter.last() && candidate == delimiter {
+                        return (len, Some(i.wrapping_add(len)));
+                    }
+                    i = i.wrapping_add(2);
+                    continue;
                 }
             }
             let c = *hay.get(i).unwrap_or(&0);

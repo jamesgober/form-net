@@ -101,6 +101,7 @@ const fn min_u64(a: u64, b: u64) -> u64 {
 }
 
 /// `value` as `usize`, or `usize::MAX` when it does not fit.
+#[cfg(feature = "alloc")]
 const fn to_usize(value: u64) -> usize {
     if value > usize::MAX as u64 {
         usize::MAX
@@ -422,6 +423,7 @@ impl Limits {
         min_u64(self.max_epilogue_bytes as u64, self.body())
     }
 
+    #[cfg(feature = "alloc")]
     pub(crate) const fn body_usize(&self) -> usize {
         to_usize(self.body())
     }

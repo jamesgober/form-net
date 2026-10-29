@@ -1866,7 +1866,7 @@ impl Upload {
 impl core::fmt::Debug for Upload { /* names, lengths, file count; never values */ }
 ```
 
-The result of a completed multipart parse with storage. Text values are owned, checked as text the way `parse_multipart` checks them, and wiped on drop; the text arena holds the names and values of the text fields, grows in 64 KiB doubling steps, and is bounded by `max_text_bytes` for the values plus `max_name_bytes` per field for the names. Files are `StoredFile`s, deleted on drop unless persisted or taken. `iter` yields text fields `(name, value)` in body order. `take_file` removes and returns the first file with that name. `captured_token` is the token field's value (see [`TokenField`](#tokenfield-tokenplacement)).
+The result of a completed multipart parse with storage. Text values are owned, checked as text the way `parse_multipart` checks them, and wiped on drop; the text arena holds the names and values of the text fields, grows by doubling from 1 KiB, and is bounded by `max_text_bytes` for the values plus `max_name_bytes` per field for the names. Files are `StoredFile`s, deleted on drop unless persisted or taken. `iter` yields text fields `(name, value)` in body order. `take_file` removes and returns the first file with that name. `captured_token` is the token field's value (see [`TokenField`](#tokenfield-tokenplacement)).
 
 `parse_with` is the blocking loop over a reader with explicit limits, policy, store, and inspector; it reads in 64 KiB chunks.
 

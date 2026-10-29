@@ -54,7 +54,7 @@ impl FileData {
     }
 
     pub(crate) fn append(&mut self, chunk: &[u8]) {
-        crate::wipe::append_wiping(&mut self.bytes, chunk, 64 * 1024, usize::MAX);
+        crate::wipe::append_wiping(&mut self.bytes, chunk, 4096, usize::MAX);
     }
 
     /// The file's bytes.

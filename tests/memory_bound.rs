@@ -213,6 +213,45 @@ fn test_files_just_past_a_power_of_two_stay_under_the_bound() {
 }
 
 #[test]
+fn test_growth_near_the_cap_stays_under_the_bound() {
+    // Found by review: a last doubling clamped to the cap kept an old
+    // buffer of almost the cap alive beside the new one.
+    const SMALL: Limits = Limits::DEFAULT
+        .with_max_body_bytes(20 * 1024)
+        .with_max_fields(3)
+        .with_max_parts(3)
+        .with_max_name_bytes(8)
+        .with_max_value_bytes(8192)
+        .with_max_text_bytes(16_400)
+        .with_max_files(0)
+        .with_max_file_bytes(1)
+        .with_sniff_bytes(1)
+        .with_max_part_header_bytes(1024);
+    let mut body = Vec::new();
+    for (i, n) in [8190usize, 8190, 18].iter().enumerate() {
+        body.extend_from_slice(
+            format!("--X\r\nContent-Disposition: form-data; name=t{i}\r\n\r\n").as_bytes(),
+        );
+        body.extend(std::iter::repeat_n(b'v', *n));
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(b"--X--");
+    let store = Store::memory_only();
+    let bound = store.memory_bound(&SMALL);
+    for chunk in [body.len(), 4096, 7] {
+        let (p, n) = peak(|| {
+            let mut s = UploadSession::new(CT, &SMALL, &Policy::DEFAULT, &store).unwrap();
+            for c in body.chunks(chunk) {
+                s.push(c, &mut NoInspector).unwrap();
+            }
+            s.finish(&mut NoInspector).unwrap().iter().count()
+        });
+        assert_eq!(n, 3);
+        assert!(p <= bound, "chunk {chunk}: peak {p} > bound {bound}");
+    }
+}
+
+#[test]
 fn test_the_bound_is_not_loose_by_orders_of_magnitude() {
     // The bound is for admission control: it must be near what a hostile
     // body really costs, or servers admit too few requests.

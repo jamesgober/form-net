@@ -370,14 +370,32 @@ fn feed_urlencoded<B: FormBuilder, I: Inspector>(
 ) -> Result<(), FormError> {
     let mut name_stack = [0u8; STACK];
     let mut value_stack = [0u8; STACK];
+    // The most of each stack buffer any pair wrote: only that is wiped.
+    let (mut name_hi, mut value_hi) = (0usize, 0usize);
     let mut heap = alloc::vec::Vec::new();
+    // One UTF-8 pass over the body; plain names and values are cut from it.
+    let whole = core::str::from_utf8(input).ok();
     let fed = (|| {
         for pair in crate::urlencoded::raw::raw_pairs(input, limits) {
             let pair = pair?;
+            // Nothing to decode (the usual case): borrow, no copy.
+            if let (Some(name), Some(value)) = (pair.name_text(whole), pair.value_text(whole)) {
+                let at = crate::error::Location::at(pair.offset());
+                match inspector.field(name, value.as_bytes()) {
+                    crate::Verdict::Refuse(refusal) => {
+                        return Err(FormError::Refused { refusal, at });
+                    }
+                    crate::Verdict::Skip => {}
+                    _ => builder.text(name, value)?,
+                }
+                continue;
+            }
             let name_len = pair.name_raw().len();
             let value_len = pair.value_raw().len();
             let (name_buf, value_buf): (&mut [u8], &mut [u8]) =
                 if name_len <= STACK && value_len <= STACK {
+                    name_hi = name_hi.max(name_len);
+                    value_hi = value_hi.max(value_len);
                     (&mut name_stack, &mut value_stack)
                 } else {
                     let needed = name_len.saturating_add(value_len);
@@ -404,8 +422,8 @@ fn feed_urlencoded<B: FormBuilder, I: Inspector>(
         }
         Ok(())
     })();
-    crate::wipe::wipe(&mut name_stack);
-    crate::wipe::wipe(&mut value_stack);
+    crate::wipe::wipe(name_stack.get_mut(..name_hi).unwrap_or(&mut []));
+    crate::wipe::wipe(value_stack.get_mut(..value_hi).unwrap_or(&mut []));
     crate::wipe::wipe_vec(&mut heap);
     fed?;
     if let crate::Verdict::Refuse(refusal) = inspector.end() {

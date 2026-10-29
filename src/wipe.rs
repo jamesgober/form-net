@@ -69,6 +69,45 @@ impl Drop for WipeVec {
     }
 }
 
+/// A read buffer that wipes, on drop, only the bytes reads ever filled:
+/// the front `used` bytes. A 64 KiB buffer that carried a 2 KiB form costs
+/// a 2 KiB wipe (D-103).
+#[cfg(feature = "fs")]
+pub(crate) struct ReadBuf {
+    pub(crate) buf: alloc::vec::Vec<u8>,
+    used: usize,
+}
+
+#[cfg(feature = "fs")]
+impl ReadBuf {
+    pub(crate) fn new(len: usize) -> ReadBuf {
+        ReadBuf {
+            buf: alloc::vec![0u8; len],
+            used: 0,
+        }
+    }
+
+    /// Records that a read filled the first `n` bytes.
+    pub(crate) fn filled(&mut self, n: usize) {
+        self.used = self.used.max(n.min(self.buf.len()));
+    }
+
+    /// Records a failed read: it may have written anywhere in the buffer
+    /// before failing, so all of it is wiped.
+    pub(crate) fn failed(&mut self) {
+        self.used = self.buf.len();
+    }
+}
+
+#[cfg(feature = "fs")]
+impl Drop for ReadBuf {
+    fn drop(&mut self) {
+        if let Some(used) = self.buf.get_mut(..self.used) {
+            wipe(used);
+        }
+    }
+}
+
 /// Wipes the bytes of an optional string and leaves `None`.
 #[cfg(feature = "alloc")]
 pub(crate) fn wipe_opt_string(s: &mut Option<alloc::string::String>) {
@@ -88,7 +127,16 @@ pub(crate) fn append_wiping(v: &mut alloc::vec::Vec<u8>, bytes: &[u8], step: usi
         while target < needed {
             target = target.saturating_mul(2);
         }
-        let target = target.min(cap.max(needed));
+        // Near the cap, go straight to it: a last doubling clamped to the
+        // cap could leave an old buffer of almost the cap alive beside the
+        // new one during the move, nearly twice what `memory_bound` allows
+        // for growth (found by review).
+        let ceiling = cap.max(needed);
+        let target = if target > ceiling / 2 {
+            ceiling
+        } else {
+            target
+        };
         let mut grown = alloc::vec::Vec::with_capacity(target);
         grown.extend_from_slice(v);
         wipe_vec(v);
