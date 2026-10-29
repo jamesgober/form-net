@@ -207,3 +207,35 @@ mod props {
         }
     }
 }
+
+#[test]
+fn test_scratch_is_wiped_where_it_was_used() {
+    // D-103: only the held bytes are wiped, and every held byte is.
+    let limits = Limits::DEFAULT
+        .with_max_name_bytes(16)
+        .with_max_value_bytes(64);
+    let mut scratch = vec![0u8; limits.urlencoded_buffer_len()];
+    {
+        let body = b"password=hunter2hunter2&token=abcdefghijklmnopqrstuvwxyz";
+        let bytes: Vec<&[u8]> = body.chunks(3).collect();
+        let mut parser = UrlencodedParser::with_buffer(&limits, &mut scratch[..]).unwrap();
+        for (i, c) in bytes.iter().enumerate() {
+            let last = i + 1 == bytes.len();
+            let mut rest: &[u8] = c;
+            loop {
+                let step = parser.parse(rest, last).unwrap();
+                rest = &rest[step.consumed..];
+                if matches!(
+                    step.event,
+                    UrlencodedEvent::NeedInput | UrlencodedEvent::End
+                ) {
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        scratch.iter().all(|&b| b == 0),
+        "held bytes left in the scratch"
+    );
+}

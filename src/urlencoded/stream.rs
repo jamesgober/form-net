@@ -50,6 +50,8 @@ pub struct UrlencodedParser<B: AsMut<[u8]> + AsRef<[u8]>> {
     release: bool,
     /// Body bytes consumed so far.
     seen: u64,
+    /// The most of `scratch` ever held: only that is wiped (D-103).
+    dirty: usize,
     budget: Budget,
     poisoned: bool,
     ended: bool,
@@ -115,6 +117,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
             held_at: 0,
             release: false,
             seen: 0,
+            dirty: 0,
             budget: Budget::new(limits),
             poisoned: false,
             ended: false,
@@ -166,7 +169,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
     /// Clears the counters and the poisoned state and wipes the scratch, for
     /// the next body.
     pub fn reset(&mut self) {
-        crate::wipe::wipe(self.scratch.as_mut());
+        self.wipe_used();
         self.held = 0;
         self.held_at = 0;
         self.release = false;
@@ -182,6 +185,14 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
         self.seen
     }
 
+    fn wipe_used(&mut self) {
+        let used = self.dirty;
+        if let Some(region) = self.scratch.as_mut().get_mut(..used) {
+            crate::wipe::wipe(region);
+        }
+        self.dirty = 0;
+    }
+
     fn clear_held(&mut self) {
         if let Some(held) = self.scratch.as_mut().get_mut(..self.held) {
             crate::wipe::wipe(held);
@@ -193,7 +204,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
         if self.ended {
             return Ok((0, Found::End));
         }
-        let body = self.budget.limits.body();
+        let body = self.budget.body;
         let mut pos = 0usize;
         loop {
             let rest = input.get(pos..).unwrap_or(&[]);
@@ -300,13 +311,14 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
         if let Some(dst) = self.scratch.as_mut().get_mut(start..end) {
             dst.copy_from_slice(bytes);
             self.held = end;
+            self.dirty = self.dirty.max(end);
         }
     }
 }
 
 impl<B: AsMut<[u8]> + AsRef<[u8]>> Drop for UrlencodedParser<B> {
     fn drop(&mut self) {
-        crate::wipe::wipe(self.scratch.as_mut());
+        self.wipe_used();
     }
 }
 

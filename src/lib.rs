@@ -86,8 +86,9 @@
 //!
 //! The full contract is `docs/API.md` in the
 //! [repository](https://github.com/jamesgober/form-net), with
-//! `docs/ARCHITECTURE.md` and `docs/PLATFORM-NOTES.md`. This release (0.5)
-//! is feature complete.
+//! `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, and
+//! `docs/PERFORMANCE.md` (measurements against the other Rust form parsers).
+//! This release (0.6) is feature complete and optimised.
 
 #![no_std]
 #![doc(html_root_url = "https://docs.rs/form-net")]

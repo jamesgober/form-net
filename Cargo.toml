@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "form-net"
-version = "0.5.0"
+version = "0.6.0"
 
 # Minimum Supported Rust Version (MSRV)
 rust-version = "1.85"
@@ -33,7 +33,7 @@ documentation = "https://docs.rs/form-net"
 authors = ["James Gober <me@jamesgober.com>"]
 
 # The fuzz crate is its own workspace and never ships.
-exclude = ["/fuzz/"]
+exclude = ["/fuzz/", "/benches/"]
 
 [package.metadata.docs.rs]
 all-features = true

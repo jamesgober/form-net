@@ -233,7 +233,7 @@ impl<S: Sink> State<S> {
                     self.part = Part::Field { skip: true };
                     return Ok(Next::SkipPart);
                 }
-                crate::wipe::append_wiping(&mut self.text, bytes, 64 * 1024, self.value_cap);
+                crate::wipe::append_wiping(&mut self.text, bytes, 256, self.value_cap);
                 Ok(Next::Continue)
             }
             Part::File { deferred: true, .. } => {

@@ -43,7 +43,13 @@ pub fn raw_pairs<'a>(input: &'a [u8], limits: &Limits) -> RawPairs<'a> {
 /// parser so both refuse the same sequence with the same error.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Budget {
-    pub(crate) limits: Limits,
+    // The effective limits this budget checks, not the whole `Limits`: the
+    // iterators that carry a budget are moved by value through adapters.
+    max_fields: u32,
+    max_name: u32,
+    max_value: u32,
+    max_text: u64,
+    pub(crate) body: u64,
     fields: u32,
     text: u64,
 }
@@ -51,7 +57,11 @@ pub(crate) struct Budget {
 impl Budget {
     pub(crate) const fn new(limits: &Limits) -> Budget {
         Budget {
-            limits: *limits,
+            max_fields: limits.max_fields,
+            max_name: limits.name(),
+            max_value: limits.value(),
+            max_text: limits.text(),
+            body: limits.body(),
             fields: 0,
             text: 0,
         }
@@ -62,18 +72,18 @@ impl Budget {
     pub(crate) fn admit(&mut self, pair: &RawPair<'_>) -> Result<(), FormError> {
         let at = Location::at(pair.offset);
         self.fields = self.fields.saturating_add(1);
-        if self.fields > self.limits.max_fields {
+        if self.fields > self.max_fields {
             return Err(FormError::limit(Limit::Fields, at));
         }
-        if pair.name.len() as u64 > u64::from(self.limits.name()) {
+        if pair.name.len() as u64 > u64::from(self.max_name) {
             return Err(FormError::limit(Limit::NameLength, at));
         }
         let value_at = pair.value_offset();
-        if pair.value.len() as u64 > u64::from(self.limits.value()) {
+        if pair.value.len() as u64 > u64::from(self.max_value) {
             return Err(FormError::limit(Limit::ValueLength, value_at));
         }
         self.text = self.text.saturating_add(pair.value.len() as u64);
-        if self.text > self.limits.text() {
+        if self.text > self.max_text {
             return Err(FormError::limit(Limit::TextTotal, value_at));
         }
         Ok(())
@@ -90,12 +100,12 @@ impl Budget {
         has_equals: bool,
         value_len: usize,
     ) -> Result<(), FormError> {
-        let name_over = name_len as u64 > u64::from(self.limits.name());
-        let value_over = has_equals && value_len as u64 > u64::from(self.limits.value());
+        let name_over = name_len as u64 > u64::from(self.max_name);
+        let value_over = has_equals && value_len as u64 > u64::from(self.max_value);
         if !name_over && !value_over {
             return Ok(());
         }
-        if self.fields.saturating_add(1) > self.limits.max_fields {
+        if self.fields.saturating_add(1) > self.max_fields {
             return Err(FormError::limit(Limit::Fields, Location::at(offset)));
         }
         if name_over {
@@ -108,6 +118,46 @@ impl Budget {
     pub(crate) fn reset(&mut self) {
         self.fields = 0;
         self.text = 0;
+    }
+}
+
+/// Scans one sequence from `start`: returns where it ends (the next `&`, or
+/// the end), where its first `=` is, and its flags. The byte set narrows as
+/// facts are learned: once a side is known to need decoding, its `%` and
+/// `+` stop mattering, so a value full of escapes is crossed in eight-byte
+/// steps instead of stopping at every `%`.
+#[inline]
+fn scan(input: &[u8], start: usize) -> (usize, Option<usize>, u8) {
+    let mut flags = 0u8;
+    let mut i = start;
+    // The name: up to the first `=` or `&`.
+    let eq = loop {
+        i = if flags & NAME_DECODE == 0 {
+            crate::scan::find_any(input, i, *b"&=%+")
+        } else {
+            crate::scan::find_any(input, i, *b"&=")
+        };
+        match input.get(i) {
+            None | Some(b'&') => return (i, None, flags),
+            Some(b'=') => break i,
+            Some(_) => flags |= NAME_DECODE,
+        }
+        i = i.wrapping_add(1);
+    };
+    flags |= HAS_EQUALS;
+    i = eq.wrapping_add(1);
+    // The value: `=` is data now; after the first `%` or `+` only `&` ends it.
+    loop {
+        i = if flags & VALUE_DECODE == 0 {
+            crate::scan::find_any(input, i, *b"&%+")
+        } else {
+            crate::scan::find_byte(input, i, b'&')
+        };
+        match input.get(i) {
+            None | Some(b'&') => return (i, Some(eq), flags),
+            Some(_) => flags |= VALUE_DECODE,
+        }
+        i = i.wrapping_add(1);
     }
 }
 
@@ -146,10 +196,10 @@ impl<'a> Iterator for RawPairs<'a> {
         }
         if !self.checked_body {
             self.checked_body = true;
-            if self.input.len() > self.budget.limits.body_usize() {
+            if self.input.len() as u64 > self.budget.body {
                 return self.fail(FormError::limit(
                     Limit::Body,
-                    Location::at(self.budget.limits.body()),
+                    Location::at(self.budget.body),
                 ));
             }
         }
@@ -159,28 +209,7 @@ impl<'a> Iterator for RawPairs<'a> {
                 return None;
             }
             let start = self.pos;
-            let mut flags = 0u8;
-            let mut eq = None;
-            let mut i = start;
-            let end = loop {
-                i = crate::scan::find_any(self.input, i, *b"&=%+");
-                match self.input.get(i) {
-                    None | Some(b'&') => break i,
-                    Some(b'=') if eq.is_none() => {
-                        eq = Some(i);
-                        flags |= HAS_EQUALS;
-                    }
-                    Some(b'%' | b'+') => {
-                        flags |= if eq.is_some() {
-                            VALUE_DECODE
-                        } else {
-                            NAME_DECODE
-                        };
-                    }
-                    Some(_) => {}
-                }
-                i = i.wrapping_add(1);
-            };
+            let (end, eq, flags) = scan(self.input, start);
             self.pos = end.saturating_add(1).min(self.input.len());
             if end == start {
                 continue;
@@ -236,28 +265,7 @@ impl fmt::Debug for RawPair<'_> {
 impl<'a> RawPair<'a> {
     /// Splits one sequence (no `&` in it) found at `offset` in the body.
     pub(crate) fn split(seq: &'a [u8], offset: u64) -> RawPair<'a> {
-        let mut flags = 0u8;
-        let mut eq = None;
-        let mut i = 0usize;
-        loop {
-            i = crate::scan::find_any(seq, i, *b"&=%+");
-            match seq.get(i) {
-                None => break,
-                Some(b'=') if eq.is_none() => {
-                    eq = Some(i);
-                    flags |= HAS_EQUALS;
-                }
-                Some(b'%' | b'+') => {
-                    flags |= if eq.is_some() {
-                        VALUE_DECODE
-                    } else {
-                        NAME_DECODE
-                    };
-                }
-                Some(_) => {}
-            }
-            i = i.wrapping_add(1);
-        }
+        let (_, eq, flags) = scan(seq, 0);
         let (name, value) = match eq {
             Some(e) => (
                 seq.get(..e).unwrap_or(&[]),
@@ -270,6 +278,43 @@ impl<'a> RawPair<'a> {
             value,
             flags,
             offset,
+        }
+    }
+
+    /// The name as text when it needs no decoding. With `whole` (the body,
+    /// already validated as UTF-8 in one pass) it is cut from it: the cut
+    /// falls at ASCII `&` or `=`, so it is an O(1) boundary check instead of
+    /// a UTF-8 pass per name (D-104).
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub(crate) fn name_text(&self, whole: Option<&'a str>) -> Option<&'a str> {
+        if self.name_needs_decoding() {
+            return None;
+        }
+        let start = usize::try_from(self.offset).ok()?;
+        match whole {
+            Some(w) => w.get(start..start.checked_add(self.name.len())?),
+            None => core::str::from_utf8(self.name).ok(),
+        }
+    }
+
+    /// As [`name_text`](Self::name_text), for the value.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub(crate) fn value_text(&self, whole: Option<&'a str>) -> Option<&'a str> {
+        if self.value_needs_decoding() {
+            return None;
+        }
+        if self.value.is_empty() {
+            return Some("");
+        }
+        let start = usize::try_from(self.offset)
+            .ok()?
+            .checked_add(self.name.len())?
+            .checked_add(1)?;
+        match whole {
+            Some(w) => w.get(start..start.checked_add(self.value.len())?),
+            None => core::str::from_utf8(self.value).ok(),
         }
     }
 

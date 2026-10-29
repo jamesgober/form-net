@@ -456,6 +456,9 @@ mod owned {
     pub fn pairs(input: &[u8]) -> Pairs<'_> {
         Pairs {
             raw: raw_pairs(input, &Limits::DEFAULT),
+            // One UTF-8 pass over the body; names and values are then cut
+            // from it (D-104).
+            whole: core::str::from_utf8(input).ok(),
             done: false,
         }
     }
@@ -464,6 +467,7 @@ mod owned {
     #[derive(Debug, Clone)]
     pub struct Pairs<'a> {
         raw: RawPairs<'a>,
+        whole: Option<&'a str>,
         done: bool,
     }
 
@@ -491,9 +495,16 @@ mod owned {
                         .offset()
                         .saturating_add(p.name_raw().len() as u64)
                         .saturating_add(1);
-                    component(p.name_raw(), p.name_needs_decoding(), p.offset()).and_then(|name| {
-                        component(p.value_raw(), p.value_needs_decoding(), value_at)
-                            .map(|value| (name, value))
+                    let name = match p.name_text(self.whole) {
+                        Some(n) => Ok(Cow::Borrowed(n)),
+                        None => component(p.name_raw(), p.name_needs_decoding(), p.offset()),
+                    };
+                    name.and_then(|name| {
+                        let value = match p.value_text(self.whole) {
+                            Some(v) => Ok(Cow::Borrowed(v)),
+                            None => component(p.value_raw(), p.value_needs_decoding(), value_at),
+                        };
+                        value.map(|value| (name, value))
                     })
                 }
                 Err(e) => Err(e),

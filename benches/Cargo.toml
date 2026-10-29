@@ -1,0 +1,39 @@
+[package]
+name = "form-net-bench"
+version = "0.0.0"
+publish = false
+edition = "2024"
+description = "Benchmarks of form-net against other Rust form parsers (docs/PERFORMANCE.md)."
+
+# Its own workspace: the competitors below never enter form-net's
+# dependency tree, its lockfile, or its audit.
+[workspace]
+members = ["."]
+
+[dependencies]
+form-net = { path = "..", features = ["fs", "unicode"] }
+
+# Competitors (PLAN 11.2), at the versions the parity matrix names.
+multer = "=3.1.0"
+multipart = { version = "=0.18.0", default-features = false, features = ["server"] }
+form_urlencoded = "=1.2.2"
+serde_urlencoded = "=0.7.1"
+serde_qs = "=1.1.3"
+serde = { version = "1", features = ["derive"] }
+bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+futures-executor = "0.3"
+
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "urlencoded"
+harness = false
+
+[[bench]]
+name = "multipart"
+harness = false
+
+[profile.bench]
+debug = 1

@@ -72,15 +72,16 @@ Exit: every P0, P1, and P2 item exists, is documented with runnable examples, an
 - [x] Shapes from the 0.4 consumer review (D-090): `FromForm::from_upload_mut`, `from_body_all` with `FormErrors` (D-097), `Upload::from_form` (D-098).
 - [x] Example: `build_multipart_client`.
 
-## v0.6.0 - Optimisation
+## v0.6.0 - Optimisation (DONE 2026-10-29, one input awaiting James's decision)
 
 Exit: numbers published; no hot-path allocation; adversarial benchmarks linear; each family at least 20% faster than its best Rust competitor at equal or stronger limits, or this file records which family missed, why, and James's decision.
 
-- [ ] Benchmark crate with every family of PLAN 11.2 against the competitors; baselines committed; a CI job keeps it building.
-- [ ] The parity matrix's unverified cells checked against competitor source code before any comparison is published.
-- [ ] Optimise against the measurements; record each change with its numbers.
-- [ ] `docs/PERFORMANCE.md`: results, method, machine, commands.
-- [ ] The work-budget idea measured (PLAN 14, 0.2) and the first-bytes fingerprint idea (0.6).
+- [x] Benchmark crate with every family of PLAN 11.2 against the competitors (`benches/`, its own workspace); baselines committed (`benches/baseline/`); a CI job keeps it building and its agreement tests passing.
+- [x] The parity matrix's unverified cells checked against competitor source code before any comparison is published (D-108).
+- [x] Optimise against the measurements; record each change with its numbers (D-102 to D-105).
+- [x] `docs/PERFORMANCE.md`: results, method, machine, commands (D-106).
+- [x] The work-budget idea measured (PLAN 14, 0.2) and the first-bytes fingerprint idea (0.6) (D-107).
+- [ ] The exit's bar, recorded per the exit rule: every family passes on every input except urlencoded to pairs on the 25-byte, two-field search query `q=rust+form+parser&page=2`, where form-net and form_urlencoded are level (0.88x collecting, 0.99x iterating, 1.04x with form-net's allocation-free decode; `docs/PERFORMANCE.md`). Why: both spend most of that input's time allocating the one owned string `+` decoding needs, and form-net checks more (strict UTF-8, every limit). James's decision: pending. Recommendation: accept, since the gap is one allocation both crates make, the allocation-free path is already level, and closing it would mean weakening a check.
 
 ## v0.7.0 - Hardening
 

@@ -13,6 +13,39 @@
 
 ---
 
+## [0.6.0] - 2026-10-29
+
+Optimisation: measured against the other Rust form parsers, and at least 20%
+faster than the best of them on every benchmark of the plan but one input, a
+25-byte search query where form-net and form_urlencoded are level.
+
+### Added
+
+- `benches/`, a benchmark crate in its own workspace (the competitors never
+  enter form-net's dependency tree): criterion benchmarks of every family,
+  an interleaved ratio harness for a shared machine, the PLAN 11.1 targets,
+  allocation counts, and tests that every driver does the same work.
+- `docs/PERFORMANCE.md`: results, method, machine, commands, and a
+  capability comparison checked against each competitor's source.
+
+### Changed
+
+- The multipart delimiter search skips to the next CRLF 32 bytes at a time
+  and compares the delimiter whole there; the automaton runs only near the
+  end of a chunk. Random file data parses at about 13 to 29 GB/s and the
+  adversarial shapes faster than random data.
+- urlencoded: the scanner narrows its byte set as it learns, the decoder
+  decodes escapes in place, plain names and values are cut from one UTF-8
+  pass over the body, and the serializer writes escapes from a
+  table.
+- Wipes cover the bytes that were written rather than whole buffers, and
+  growing buffers start small: a parser no longer spends most of a small
+  form's time wiping 9.6 KiB it never used. Every written byte is still
+  wiped; tests over caller buffers prove it.
+- CI: a job keeps the benchmark crate building and its drivers agreeing.
+
+---
+
 ## [0.5.0] - 2026-10-26
 
 Feature complete: every P0, P1, and P2 item of the design.
@@ -231,7 +264,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jamesgober/form-net/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/form-net/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/form-net/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/form-net/compare/v0.2.0...v0.3.0

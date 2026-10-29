@@ -49,6 +49,69 @@ pub(crate) fn find_any<const N: usize>(hay: &[u8], from: usize, set: [u8; N]) ->
     hay.len()
 }
 
+/// The little-endian word of the 8 bytes at `at`, or 0 past the end.
+#[inline]
+fn word(hay: &[u8], at: usize) -> u64 {
+    hay.get(at..)
+        .and_then(<[u8]>::first_chunk::<8>)
+        .map_or(0, |c| u64::from_le_bytes(*c))
+}
+
+/// The index of the first `a` at or after `from` that is followed by `b`,
+/// or of an `a` that is the last byte of `hay` (the pair may complete in the
+/// next chunk), or `hay.len()`.
+///
+/// Thirty-two positions per step: four words are matched against `a`, and
+/// only a word that holds an `a` has the word one byte on matched against
+/// `b`. So data with few `a` bytes is crossed at the cost of four matches
+/// per 32 bytes, and data made of `a` bytes with no `b` after them is still
+/// crossed 32 bytes at a time.
+#[inline]
+pub(crate) fn find_pair(hay: &[u8], from: usize, a: u8, b: u8) -> usize {
+    let mut i = from;
+    // Thirty-two positions per step while 33 bytes remain (the `b` words
+    // read one byte past the block). One OR of four `a` masks decides most
+    // blocks; only a block holding an `a` looks at the words for `b`.
+    while let Some(block) = hay.get(i..i.wrapping_add(33)) {
+        let m = [
+            matches(word(block, 0), a),
+            matches(word(block, 8), a),
+            matches(word(block, 16), a),
+            matches(word(block, 24), a),
+        ];
+        if m[0] | m[1] | m[2] | m[3] != 0 {
+            for (k, &mk) in m.iter().enumerate() {
+                if mk == 0 {
+                    continue;
+                }
+                let base = k.wrapping_mul(8);
+                let mut hits = mk & matches(word(block, base.wrapping_add(1)), b);
+                while hits != 0 {
+                    // The zero-byte test can set a bit above a true match;
+                    // each candidate is checked against the bytes.
+                    let at = base.wrapping_add((hits.trailing_zeros() / 8) as usize);
+                    if block.get(at) == Some(&a) && block.get(at.wrapping_add(1)) == Some(&b) {
+                        return i.wrapping_add(at);
+                    }
+                    hits &= hits.wrapping_sub(1);
+                }
+            }
+        }
+        i = i.wrapping_add(32);
+    }
+    while let Some(&c) = hay.get(i) {
+        if c == a {
+            match hay.get(i.wrapping_add(1)) {
+                None => return i,
+                Some(&next) if next == b => return i,
+                _ => {}
+            }
+        }
+        i = i.wrapping_add(1);
+    }
+    hay.len()
+}
+
 /// The index of the first `byte` in `hay` at or after `from`, or
 /// `hay.len()`.
 #[inline]
@@ -90,6 +153,38 @@ mod tests {
                 naive(hay, from, b"&=%+"),
                 "from {from}"
             );
+        }
+    }
+
+    fn naive_pair(hay: &[u8], from: usize, a: u8, b: u8) -> usize {
+        (from..hay.len())
+            .find(|&i| hay[i] == a && hay.get(i + 1).is_none_or(|&n| n == b))
+            .unwrap_or(hay.len())
+    }
+
+    #[test]
+    fn test_find_pair_matches_naive_on_dense_and_borrow_patterns() {
+        // CR and LF in every arrangement, high bytes that exercise the
+        // borrow of the zero-byte test, and every start position.
+        let mut seed = 7u64;
+        for len in 0..64 {
+            for _ in 0..40 {
+                let hay: alloc::vec::Vec<u8> = (0..len)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        [b'\r', b'\n', 0x0c, 0x0e, 0x8d, 0x8a, b'x', 0x00][(seed % 8) as usize]
+                    })
+                    .collect();
+                for from in 0..=len {
+                    assert_eq!(
+                        find_pair(&hay, from, b'\r', b'\n'),
+                        naive_pair(&hay, from, b'\r', b'\n'),
+                        "{hay:?} from {from}"
+                    );
+                }
+            }
         }
     }
 

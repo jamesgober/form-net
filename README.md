@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>#![forbid(unsafe_code)]</code>. No third-party dependencies apart from the audited <code>zeroize</code> and <code>subtle</code>, which first-party <code>crypt-io</code> brings for wiping secrets.
     </p>
     <blockquote>
-        <strong>Status: feature complete (<code>0.5.0</code>).</strong> Every item of the design is in: parsing, streaming, upload storage with shared disk budgets, inspection hooks, blocking readers, typed extraction, and the multipart writer. Next: benchmarks and optimisation (<code>0.6.0</code>). The contract is <a href="./docs/API.md"><code>docs/API.md</code></a>; the schedule is <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: optimised (<code>0.6.0</code>).</strong> Every item of the design is in, and every benchmark family runs at least 20% faster than the best other Rust form parser, with one short input level (<a href="./docs/PERFORMANCE.md"><code>docs/PERFORMANCE.md</code></a>). Next: hardening (<code>0.7.0</code>). The contract is <a href="./docs/API.md"><code>docs/API.md</code></a>; the schedule is <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -65,7 +65,7 @@ The plan for 1.0. Each item names the version that ships it.
 
 ```toml
 [dependencies]
-form-net = { version = "0.5", features = ["fs"] }
+form-net = { version = "0.6", features = ["fs"] }
 ```
 
 The `fs` feature adds upload storage; the default features cover parsing, hooks, readers, and typed forms. Without default features the crate is `no_std` and needs no allocator: the allocation-free core (`raw_pairs`, `decode_into`, `MultipartParser::with_buffer`) works on any target. Add `features = ["alloc"]` for the owned results.
