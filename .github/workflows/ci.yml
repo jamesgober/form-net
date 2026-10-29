@@ -94,9 +94,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # NFR-1: the runtime tree holds form-net and first-party crates,
+          # NFR-1: the runtime tree holds form-net and first-party crates
+          # (parse-net, crypt-io, mod-rand, path-lib, unicode-lang),
           # plus the audited zeroize and subtle that crypt-io brings (D-083).
-          allowed='^(form-net|parse-net|crypt-io|mod-rand|path-lib|zeroize|subtle)$'
+          allowed='^(form-net|parse-net|crypt-io|mod-rand|path-lib|unicode-lang|zeroize|subtle)$'
           core=$(cargo tree -e normal --prefix none --no-default-features | awk '{print $1}' | sort -u | tr '\n' ' ')
           if [ "$core" != "form-net parse-net " ]; then
             echo "the allocation-free core must depend on parse-net alone: $core"
