@@ -101,11 +101,11 @@ Browsers send none of these. The capture corpus below proves that every body cur
 
 | Source | Captured | Result |
 |---|---|---|
-| Chrome 155 (headless) | 2026-10-30 | every field read as sent; `"` and LF in names and file names arrive as `%22` and `%0A`, which `name()` decodes and `FileName::html_unescaped` decodes |
-| Edge 155 (headless) | 2026-10-30 | the same bytes as Chrome, but for the boundary |
-| curl 8.5 | 2026-10-30 | every field read as sent; `"` in a file name arrives as `%22` |
-| Python requests 2.31 | 2026-10-30 | the same |
-| Go 1.27 `mime/multipart` | 2026-10-30 | every field read as sent; a `"` in a file name arrives as `\"`, which form-net refuses (`AmbiguousQuote`): a Go client should not send one |
+| Chrome 155 (headless) | 2026-10-29 | every field read as sent; `"` and LF in names and file names arrive as `%22` and `%0A`, which `name()` decodes and `FileName::html_unescaped` decodes |
+| Edge 155 (headless) | 2026-10-29 | the same bytes as Chrome, but for the boundary |
+| curl 8.5 | 2026-10-29 | every field read as sent; `"` in a file name arrives as `%22` |
+| Python requests 2.31 | 2026-10-29 | the same |
+| Go 1.27 `mime/multipart` | 2026-10-29 | every field read as sent; a `"` in a file name arrives as `\"`, which form-net refuses (`AmbiguousQuote`): a Go client should not send one |
 | Firefox, Safari | not yet | this machine has neither; `python3 tools/capture/capture.py --browser <path>` (or no argument, to open the page by hand in Safari) adds them |
 
 A part named with a backslash (`name="back\slash"`), which every browser sends as is, is refused (D-082); the corpus holds it as `refused.body` for each browser.
@@ -170,7 +170,7 @@ With all three fixed, the 1,319 mutants of the corpus split 519 read the same an
 | unknown parameter | 55 | 55 / 0 / 0 | 55 / 0 / 0 | 0 |
 | whitespace before colon | 55 | 0 / 55 / 0 | 0 / 55 / 0 | 0 |
 
-Run on 2026-10-30, after D-113, D-114, and D-116. No mutant is now accepted by both and read differently. Triage of what remains:
+Run on 2026-10-29, after D-113, D-114, and D-116. No mutant is now accepted by both and read differently. Triage of what remains:
 
 - **multer accepts, form-net refuses:** transfer encodings, nested `multipart/*`, a duplicated `Content-Disposition` or parameter, `name*` and `filename*` beside the plain form, `name = "x"`, padding and epilogues past form-net's budgets. multer reads each by its own rule (first or last wins, encodings ignored); a reader in front of it could read them another way, which is why form-net refuses them. No action for form-net.
 - **multer reads differently from its own original, form-net refuses:** a second `Content-Disposition` with another name, `\"` in a name, single quotes, bare LF in headers and before a delimiter. multer reads each, differently from the unmutated body; a reader in front of multer could disagree with it. No action for form-net.
@@ -186,7 +186,7 @@ Run on 2026-10-30, after D-113, D-114, and D-116. No mutant is now accepted by b
 
 ### Soak (NFR-15)
 
-`tests/soak.rs`, 14,400 seconds, release build, Linux (WSL2, kernel 6.6), Rust 1.99, run on 2026-10-30 on the code that ships. 64 sessions upload in a loop through one `Store` (memory threshold 16 KiB), with bodies of 0 bytes to 3 MiB and 20% of uploads dropped part way.
+`tests/soak.rs`, 14,400 seconds, release build, Linux (WSL2, kernel 6.6), Rust 1.99, run on 2026-10-29 on the code that ships. 64 sessions upload in a loop through one `Store` (memory threshold 16 KiB), with bodies of 0 bytes to 3 MiB and 20% of uploads dropped part way.
 
 | | result |
 |---|---|
@@ -201,4 +201,22 @@ Run on 2026-10-30, after D-113, D-114, and D-116. No mutant is now accepted by b
 
 No growth: the second half's worst sample is within the first half's on every measure, and the process ends where it started.
 
-FUZZ
+### Fuzzing (T-29)
+
+Every target ran for 24 hours, all 12 at once at the lowest CPU priority, with a 2 GiB memory limit, on the code that ships (nightly `cargo fuzz`, optimised build, Linux on WSL2), from 2026-10-29 20:28 UTC to 2026-10-30 20:28 UTC. No crash, no timeout, no memory-limit stop: every target's artifact directory is empty.
+
+| Target | Runs |
+|---|---|
+| `fuzz_boundary` | 14,088,662,988 |
+| `fuzz_decode` | 11,280,304,294 |
+| `fuzz_detect` | 8,726,806,246 |
+| `fuzz_extract` | 4,205,048,795 |
+| `fuzz_filename` | 2,295,222,773 |
+| `fuzz_multipart` | 1,538,070,966 |
+| `fuzz_multipart_differential` | 1,891,435,055 |
+| `fuzz_part_headers` | 2,057,411,053 |
+| `fuzz_raw_pairs` | 3,591,307,564 |
+| `fuzz_upload_session` | 2,060,577,359 |
+| `fuzz_urlencoded_stream` | 3,579,352,856 |
+| `fuzz_writer_roundtrip` | 976,938,896 |
+| **Total** | **56,291,138,845** |
