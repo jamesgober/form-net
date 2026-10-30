@@ -188,7 +188,7 @@ impl Boundary {
     #[inline]
     pub(crate) fn step(&self, mut k: usize, c: u8) -> usize {
         #[cfg(test)]
-        tests::count_visit();
+        tests::count_visits(1);
         loop {
             if self.delimiter.get(k) == Some(&c) {
                 return k.wrapping_add(1);
@@ -227,12 +227,14 @@ impl Boundary {
     /// the delimiter's LF is followed by `--`, and the boundary holds no
     /// line break. So the search skips to the next such pair 32 positions
     /// at a time and compares `--boundary` after it whole; the byte before
-    /// tells a delimiter (CR LF) from a bare break. A miss resumes one byte
-    /// on. The automata are stepped byte by byte only where a match spans
-    /// chunks: at the start of `hay`, until no match carried in reaches back
-    /// before it, and near the end, from the CR before the LF; so the
-    /// states returned are exactly the automata's (D-102, D-113). The
-    /// boundary's lack of line breaks also keeps the compares linear: a
+    /// tells a delimiter (CR LF) from a bare break. A miss resumes at the
+    /// byte that differed: the bytes before it are boundary, which holds no
+    /// line break. A match that spans chunks is compared too, against the bytes it
+    /// still needs at the start of `hay` and the bytes `hay` still has at
+    /// its end: with no line break in the boundary, at most one match is
+    /// live past a lone CR, and the moment it fails nothing else is. So the
+    /// states returned are exactly the automata's, at a compare per chunk
+    /// (D-102, D-113, D-117). The same fact keeps the compares linear: a
     /// candidate can never start inside the bytes the one before it matched.
     pub(crate) fn run(&self, mut k: usize, mut m: usize, hay: &[u8]) -> (usize, usize, Hit) {
         let len = self.len();
@@ -240,29 +242,40 @@ impl Boundary {
         let delimiter = self.delimiter();
         let dashes = delimiter.get(2..).unwrap_or(&[]);
         let mut i = 0usize;
-        if k > 0 || m > 0 {
-            // A match carried in: step until every live partial match lies
-            // inside `hay`, then search again from where the longest starts.
-            while let Some(&c) = hay.get(i) {
-                k = self.step(k, c);
-                m = self.bare_step(m, c);
-                i = i.wrapping_add(1);
-                if k == len {
-                    return (k, m, Hit::Delimiter(i));
-                }
-                if m == bare {
-                    return (k, m, Hit::BareBreak(i));
-                }
-                if k.max(m) <= i {
-                    i = i.wrapping_sub(k.max(m));
-                    (k, m) = (0, 0);
-                    break;
-                }
-            }
-            if k > 0 || m > 0 {
-                // All of `hay` extended the match.
+        if k == 1 {
+            // A CR carried in is the one state with two futures: the next
+            // byte makes it a delimiter, a bare break, or nothing.
+            let Some(&c) = hay.first() else {
                 return (k, m, Hit::None);
+            };
+            k = self.step(k, c);
+            m = self.bare_step(m, c);
+            i = 1;
+            if k == 1 {
+                // Another CR: the search below starts at it.
+                (i, k, m) = (0, 0, 0);
             }
+        }
+        if m > 0 {
+            // One match carried in, delimiter or bare: compare what it
+            // still needs.
+            let need = delimiter.get(m.wrapping_add(1)..).unwrap_or(&[]);
+            let rest = hay.get(i..).unwrap_or(&[]);
+            let same = shared(need, rest);
+            if same == need.len() {
+                let end = i.wrapping_add(same);
+                return if k > 0 {
+                    (len, 0, Hit::Delimiter(end))
+                } else {
+                    (0, bare, Hit::BareBreak(end))
+                };
+            }
+            if same == rest.len() {
+                // All of `hay` extended the match.
+                let k = if k > 0 { k.wrapping_add(same) } else { 0 };
+                return (k, m.wrapping_add(same), Hit::None);
+            }
+            i = i.wrapping_add(same);
         }
         while i < hay.len() {
             let at = crate::scan::find_break_dash(hay, i);
@@ -273,37 +286,39 @@ impl Boundary {
             let after_cr = hay.get(at) == Some(&b'\n')
                 && at > 0
                 && hay.get(at.wrapping_sub(1)) == Some(&b'\r');
-            if let Some(candidate) = hay.get(start..start.wrapping_add(dashes.len())) {
-                // The last byte first: a near miss usually differs there.
-                if candidate.last() == dashes.last() && candidate == dashes {
-                    let end = start.wrapping_add(dashes.len());
-                    return if after_cr {
-                        (len, 0, Hit::Delimiter(end))
-                    } else {
-                        (0, bare, Hit::BareBreak(end))
-                    };
-                }
-                i = start;
-                continue;
+            let rest = hay.get(start..).unwrap_or(&[]);
+            let same = shared(dashes, rest);
+            if same == dashes.len() {
+                let end = start.wrapping_add(same);
+                return if after_cr {
+                    (len, 0, Hit::Delimiter(end))
+                } else {
+                    (0, bare, Hit::BareBreak(end))
+                };
             }
-            // Too close to the end to compare whole: step the automata from
-            // here (from the CR of a CR LF) to the end.
-            let mut j = if after_cr { at.wrapping_sub(1) } else { at };
-            while let Some(&c) = hay.get(j) {
-                k = self.step(k, c);
-                m = self.bare_step(m, c);
-                j = j.wrapping_add(1);
-                if k == len {
-                    return (k, m, Hit::Delimiter(j));
-                }
-                if m == bare {
-                    return (k, m, Hit::BareBreak(j));
-                }
+            if same == rest.len() {
+                // All of `hay` is the start of a match, which goes on in
+                // the next chunk.
+                let k = if after_cr {
+                    same.wrapping_add(2)
+                } else {
+                    usize::from(same == 0 && hay.get(at) == Some(&b'\r'))
+                };
+                return (k, same.wrapping_add(1), Hit::None);
             }
-            return (k, m, Hit::None);
+            i = start.wrapping_add(same);
         }
         (0, 0, Hit::None)
     }
+}
+
+/// How many leading bytes `a` and `b` share.
+#[inline]
+pub(crate) fn shared(a: &[u8], b: &[u8]) -> usize {
+    let n = crate::scan::common_prefix(a, b);
+    #[cfg(test)]
+    tests::count_visits(n.wrapping_add(1));
+    n
 }
 
 /// What a run of the matchers found.
@@ -356,11 +371,11 @@ pub(crate) mod tests {
         static VISITS: Cell<u64> = const { Cell::new(0) };
     }
 
-    /// Counts one byte the matcher compares (one call to `step`, which may
-    /// follow the failure table several times: KMP bounds those by the
-    /// bytes seen).
-    pub(crate) fn count_visit() {
-        VISITS.with(|v| v.set(v.get() + 1));
+    /// Counts bytes the matcher compares: one call to `step`, which may
+    /// follow the failure table several times (KMP bounds those by the
+    /// bytes seen), or the bytes of one whole compare.
+    pub(crate) fn count_visits(n: usize) {
+        VISITS.with(|v| v.set(v.get() + n as u64));
     }
 
     #[cfg(feature = "alloc")]
@@ -535,6 +550,48 @@ pub(crate) mod tests {
                     }
                     let bytes: Vec<&[u8]> = hay.chunks(1).collect();
                     assert_eq!(chunked_hit(&b, &bytes), expected, "{hay:?} bytewise");
+                }
+            }
+        }
+    }
+
+    /// D-117: `run` compares where the automata step, and the states it
+    /// leaves are exactly theirs, so a match carries across any split.
+    #[test]
+    fn test_run_leaves_the_automata_states_at_every_split() {
+        let mut seed = 5u64;
+        for boundary in [&b"-ab"[..], b"--", b"x", b"ab-", b"abcdefghijklmnop"] {
+            let b = Boundary::new(boundary).unwrap();
+            let bare = b.len() - 1;
+            let hay_bytes: &[u8] = &[b'\r', b'\n', b'-', b'-', boundary[0], b'x'];
+            for len in 0..48 {
+                for _ in 0..40 {
+                    let mut hay: Vec<u8> = (0..len)
+                        .map(|_| {
+                            seed ^= seed << 13;
+                            seed ^= seed >> 7;
+                            seed ^= seed << 17;
+                            hay_bytes[(seed % 6) as usize]
+                        })
+                        .collect();
+                    // A partial match at the end, of every length.
+                    let d = b.delimiter();
+                    hay.extend_from_slice(&d[..len % d.len()]);
+                    if !matches!(naive_hit(&b, &hay), Hit::None) {
+                        continue;
+                    }
+                    let (mut k, mut m) = (0, 0);
+                    for &c in &hay {
+                        k = b.step(k, c);
+                        m = b.bare_step(m, c);
+                        assert!(k < b.len() && m < bare);
+                    }
+                    assert_eq!(&b.run(0, 0, &hay), &(k, m, Hit::None), "{hay:?}");
+                    for split in 0..=hay.len() {
+                        let (x, y) = hay.split_at(split);
+                        let (k1, m1, _) = b.run(0, 0, x);
+                        assert_eq!(&b.run(k1, m1, y), &(k, m, Hit::None), "{hay:?} at {split}");
+                    }
                 }
             }
         }

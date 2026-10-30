@@ -87,13 +87,13 @@ Exit: numbers published; no hot-path allocation; adversarial benchmarks linear; 
 
 Exit: every threat has a passing attack test; the soak shows no growth; the differential log has no open item.
 
-- [x] Every fuzz target run 24 hours with no crash and no budget violation, on the code that ships (after D-113, D-114, D-116): 56.3 billion runs (`docs/SECURITY.md`).
+- [ ] Every fuzz target run 24 hours with no crash and no budget violation, on the code that ships (after D-113, D-114, D-116, D-117). A run before D-117 finished clean at 56.3 billion runs; D-117 changed the matcher, so it runs again.
 - [x] WAFFLED-style mutation corpus and generator (PLAN 12, `tests/common/waffled.rs`); multer differential triaged (`docs/SECURITY.md`). They found three disagreements, fixed as D-113, D-114, D-116.
 - [x] Attack tests T-1 to T-38 complete (T-29 is the fuzzing).
-- [x] 4-hour soak (NFR-15, `tests/soak.rs`), on the code that ships: 56.6 million uploads, no growth, nothing left (`docs/SECURITY.md`).
+- [ ] 4-hour soak (NFR-15, `tests/soak.rs`), on the code that ships. A run before D-117 passed at 56.6 million uploads; it runs again with the fuzzing.
 - [ ] Browser capture corpus (Chrome, Firefox, Safari) refreshed and green (NFR-14); client captures (curl, Python `requests`, Go). Chrome 155, Edge 155, curl 8.5, requests 2.31, and Go 1.27 are captured and green (D-115). Firefox and Safari need a machine that has them: `python3 tools/capture/capture.py --browser <path>`, or no argument to open the page by hand.
-- [x] `docs/SECURITY.md` complete: the threat model, the deviations, the corpus, the differential log, and the soak and fuzz results.
-- [ ] The multipart families measured again on a quiet machine after the D-113 matcher change, and the baseline committed. Measured under load (fuzzing and the soak running), every family passes; the 64 KiB avatar in 64 KiB and 1,500-byte chunks moved from 2.03x and 2.45x to 1.77x and 1.73x, which a quiet run must confirm or explain.
+- [ ] `docs/SECURITY.md` complete: the threat model, the deviations, the corpus, and the differential log are in; the soak and fuzz results are replaced by the runs on the code that ships.
+- [x] The multipart families measured again on a quiet machine after the D-113 matcher change, and the baseline committed (`benches/baseline/2026-10-30/`). It found near-miss in 1,500-byte chunks below the bar, fixed as D-117. Every multipart family passes; the avatar ratios fell because multer's minimum fell, with form-net's time unchanged.
 
 ## v0.8.0 - Alpha
 
@@ -109,8 +109,10 @@ Exit: every item accepted, deferred, or missed earlier in the series has been tr
 
 - [ ] Revisit every accepted gap, deferred item, known issue, and missed target in this file and in `dev/PLAN.md`'s decision log. Known now:
   - urlencoded pairs on the 25-byte search query, level with form_urlencoded (D-111);
+  - `raw_pairs` + `decode_into` on 1,000 fields at 0.72x form_urlencoded's iteration (it copies every byte; `pairs` on the same input passes at 1.34x and over);
+  - `pairs` on 1 MiB of escapes reading 332 or 452 µs by code placement under the default profile, the same under fat LTO (D-117): find the loop and make it steady;
   - the `FormKind::detect` estimate (114 ns measured against 100 ns), which sits in parse-net's media-type grammar;
-  - `parse_urlencoded` of ten fields at its 400 ns estimate (379 to 419 ns);
+  - `parse_urlencoded` of ten fields at its 400 ns estimate (379 to 419 ns, 405 ns in the 0.7 baseline);
   - the in-memory upload's drop cost, set by crypt-io's byte-at-a-time wipe;
   - `FileName::sanitized` filtering default-ignorables itself until path-lib does (D-084).
 - [ ] A fresh performance pass against the competitors at their then-current versions: rerun `benches/`, commit a new baseline, and tune whatever moved.

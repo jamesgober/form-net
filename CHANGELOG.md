@@ -36,7 +36,10 @@ Hardening (0.7).
 - `name`, `filename`, and `filename*` written other than in lower case are
   refused as `MalformedParameter`: multer reads `NAME=` as no name (D-116).
 - The multipart delimiter search anchors on a CR or LF followed by `-`, so
-  one pass finds delimiters and bare breaks.
+  one pass finds delimiters and bare breaks; matches across chunks are
+  compared whole, and a miss resumes at the byte that differed (D-117).
+- A new benchmark baseline (`benches/baseline/2026-10-30`), and
+  `docs/PERFORMANCE.md` measured for 0.7.
 
 ---
 

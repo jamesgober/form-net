@@ -1322,39 +1322,34 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
         let k0 = usize::from(self.k);
         if k0 > 0 {
             // Bytes from earlier chunks that matched the start of the
-            // delimiter: resolve them before anything else.
-            let mut k = k0;
-            for (i, &c) in hay.iter().enumerate() {
-                k = self.boundary.step(k, c);
-                let n = i.wrapping_add(1);
-                if k == len {
-                    // The delimiter started inside the held bytes.
-                    let data = k0.saturating_add(n).saturating_sub(len);
-                    self.k = 0;
-                    self.bare = 0;
-                    self.state = State::EndOfPart;
-                    return self.emit_delimiter_bytes(data, pos.wrapping_add(n));
-                }
-                if k <= n {
-                    // Every held byte is data; scan the input again from 0,
-                    // with the bare-break state the held bytes leave: they
-                    // are a CR, a CR LF, or a CR LF and dashes (D-113).
-                    self.k = 0;
-                    self.bare = k0.max(2).wrapping_sub(1) as u8;
-                    return self.emit_delimiter_bytes(k0, pos);
-                }
+            // delimiter: resolve them before anything else. The delimiter
+            // has one CR, so the match either goes on or all of it is over.
+            let need = self.boundary.delimiter().get(k0..).unwrap_or(&[]);
+            let (need_len, n) = (need.len(), super::boundary::shared(need, hay));
+            if n == need_len {
+                // The delimiter started inside the held bytes.
+                self.k = 0;
+                self.bare = 0;
+                self.state = State::EndOfPart;
+                return self.emit_delimiter_bytes(0, pos.wrapping_add(n));
+            }
+            if n < hay.len() {
+                // Every held byte is data; scan the input again from 0,
+                // with the bare-break state the held bytes leave: they
+                // are a CR, a CR LF, or a CR LF and dashes (D-113).
+                self.k = 0;
+                self.bare = k0.max(2).wrapping_sub(1) as u8;
+                return self.emit_delimiter_bytes(k0, pos);
             }
             // All of `hay` extended the partial match.
-            let n = hay.len();
             if eof {
                 return Err(FormError::syntax(
                     SyntaxError::Truncated,
                     self.at(input_len),
                 ));
             }
-            let data = k0.saturating_add(n).saturating_sub(k);
-            self.k = k as u8;
-            return self.emit_delimiter_bytes(data, input_len);
+            self.k = k0.saturating_add(n) as u8;
+            return self.emit_delimiter_bytes(0, input_len);
         }
         let (k, m, found) = self.boundary.run(0, usize::from(self.bare), hay);
         match found {

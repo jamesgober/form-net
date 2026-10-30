@@ -121,6 +121,22 @@ pub(crate) fn find_break_dash(hay: &[u8], from: usize) -> usize {
     hay.len()
 }
 
+/// How many leading bytes `a` and `b` share, eight at a time.
+#[inline]
+pub(crate) fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    let mut n = 0usize;
+    let (mut x, mut y) = (a.chunks_exact(8), b.chunks_exact(8));
+    for (p, q) in (&mut x).zip(&mut y) {
+        let diff = word_at(p) ^ word_at(q);
+        if diff != 0 {
+            return n.wrapping_add((diff.trailing_zeros() / 8) as usize);
+        }
+        n = n.wrapping_add(8);
+    }
+    let (p, q) = (a.get(n..).unwrap_or(&[]), b.get(n..).unwrap_or(&[]));
+    n.wrapping_add(p.iter().zip(q).take_while(|(c, d)| c == d).count())
+}
+
 /// The index of the first `byte` in `hay` at or after `from`, or
 /// `hay.len()`.
 #[inline]
@@ -145,6 +161,20 @@ pub(crate) fn count_byte(hay: &[u8], byte: u8) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_common_prefix_at_every_length_and_difference() {
+        let a: [u8; 40] = core::array::from_fn(|i| i as u8);
+        for len in 0..=a.len() {
+            assert_eq!(super::common_prefix(&a[..len], &a), len);
+            assert_eq!(super::common_prefix(&a, &a[..len]), len);
+            for at in 0..len {
+                let mut b = a;
+                b[at] ^= 0x80;
+                assert_eq!(super::common_prefix(&a[..len], &b[..len]), at);
+            }
+        }
+    }
+
     use super::*;
 
     fn naive(hay: &[u8], from: usize, set: &[u8]) -> usize {
