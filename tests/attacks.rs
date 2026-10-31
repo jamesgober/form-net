@@ -201,6 +201,23 @@ fn test_attack_t17_parameter_pollution_refused_by_strict_accessors() {
 }
 
 #[test]
+fn test_attack_t18_bracket_names_are_opaque() {
+    // Names are never parsed into paths or indexes, so a huge index costs
+    // nothing and deep nesting is only a long name.
+    let form = quick(|| form_net::parse_urlencoded(b"a[1000000000][x]=1").unwrap());
+    assert_eq!(form.iter().collect::<Vec<_>>(), [("a[1000000000][x]", "1")]);
+    let deep = format!("{}=1", "[".repeat(100_000));
+    assert_eq!(
+        limit(quick(|| form_net::parse_urlencoded(deep.as_bytes()))),
+        Limit::NameLength
+    );
+    let body =
+        b"--X\r\nContent-Disposition: form-data; name=\"a[1000000000][x]\"\r\n\r\n1\r\n--X--";
+    let mp = form_net::parse_multipart(CT, body).unwrap();
+    assert_eq!(mp.field("a[1000000000][x]"), Some("1"));
+}
+
+#[test]
 fn test_attack_t19_invalid_encodings_refused() {
     for v in [&b"%C0%AF"[..], b"%ED%A0%80", b"%", b"%4", b"%zz"] {
         let mut input = b"a=".to_vec();

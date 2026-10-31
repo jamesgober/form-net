@@ -197,7 +197,7 @@ pub(crate) mod tests {
     /// volatile write, D-083.)
     #[cfg(feature = "alloc")]
     #[test]
-    fn test_t31_owned_values_are_wiped_on_drop() {
+    fn test_attack_t31_owned_values_are_wiped_on_drop() {
         use alloc::string::String;
         let s = crate::Secret::from(String::from("hunter2"));
         assert!(wiped(|| drop(s)) >= 7);
@@ -222,7 +222,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "fs")]
     #[test]
-    fn test_t31_stored_files_and_uploads_are_wiped_on_drop() {
+    fn test_attack_t31_stored_files_and_uploads_are_wiped_on_drop() {
         let ct = b"multipart/form-data; boundary=X";
         let body = b"--X\r\nContent-Disposition: form-data; name=csrf\r\n\r\ntok\r\n--X\r\nContent-Disposition: form-data; name=pin\r\n\r\n1234\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.png\r\n\r\nsecret\r\n--X--";
         let policy = crate::Policy::DEFAULT.with_token_field(crate::TokenField::new("csrf"));

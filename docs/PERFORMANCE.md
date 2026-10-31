@@ -1,6 +1,6 @@
 # form-net performance
 
-Measured for 0.6.0 on 2026-10-29. Every number on this page is a measurement; the raw tables are committed in [`benches/baseline/2026-10-29/`](../benches/baseline/2026-10-29/), and the code that produced them is the [`benches/`](../benches/) crate.
+Measured for 0.7.0 on 2026-10-30. Every number on this page is a measurement; the raw tables are committed in [`benches/baseline/2026-10-30/`](../benches/baseline/2026-10-30/), and the code that produced them is the [`benches/`](../benches/) crate.
 
 ---
 
@@ -10,12 +10,12 @@ The plan's bar (PLAN 11.2): at least 20% faster than the best other Rust crate i
 
 | Family | Competitor | Result |
 |---|---|---|
-| urlencoded to pairs | form_urlencoded 1.2.2 | 1.39x to 9.55x on login, sign-up, 1,000 fields, and 1 MiB bodies; **level (0.88x to 1.04x) on a 25-byte two-field search query** |
-| urlencoded to a struct | serde_urlencoded 0.7.1, serde_qs 1.1.3 | 1.59x |
-| urlencoded serialize | form_urlencoded 1.2.2 | 2.26x |
-| multipart streaming | multer 3.1.0 | 1.32x to 4.97x on every input and chunk size, adversarial shapes included |
-| multipart buffered | multer 3.1.0, multipart 0.18.0 | 1.36x to 2.31x |
-| multipart to disk | multipart 0.18.0 | 2.09x |
+| urlencoded to pairs | form_urlencoded 1.2.2 | 1.34x to 8.00x on login, sign-up, 1,000 fields, and 1 MiB bodies; **level (0.88x to 0.94x) on a 25-byte two-field search query** |
+| urlencoded to a struct | serde_urlencoded 0.7.1, serde_qs 1.1.3 | 1.75x |
+| urlencoded serialize | form_urlencoded 1.2.2 | 2.20x |
+| multipart streaming | multer 3.1.0 | 1.23x to 12.32x on every input and chunk size, adversarial shapes included |
+| multipart buffered | multer 3.1.0, multipart 0.18.0 | 1.31x to 2.27x |
+| multipart to disk | multipart 0.18.0 | 2.06x |
 
 The one input below the bar is the search query `q=rust+form+parser&page=2`. Both crates spend most of its time allocating the one owned string that `+` decoding needs; form-net checks more on top (strict UTF-8, every limit). It is accepted as level rather than closed by weakening a check (`dev/PLAN.md` D-111), and is tried again in the polish pass before 1.0 (D-112).
 
@@ -29,9 +29,9 @@ The one input below the bar is the search query `q=rust+form+parser&page=2`. Bot
 | Memory | 128 GB |
 | OS | Windows 11 Pro, power plan Balanced |
 | Rust | 1.99.0 (b940084d7 2026-09-28), `--release` |
-| Load | shared with other build sessions; CPU load about 46% during the runs |
+| Load | shared with other build sessions; CPU load about 20% during the runs |
 
-Because the machine is shared, the bar is judged on the interleaved ratio harness (`benches/src/bin/ratios.rs`, D-106). For each pair it alternates form-net and the competitor in batches of about 4 ms, for 40 rounds, and each side keeps its fastest batch. Load from other work falls on both sides alike, and the minimum is the best estimate of the unloaded cost. The criterion medians (`benches/baseline/2026-10-29/criterion.md`) agree with it within the noise. Hardware counters were not measured: `perf stat` needs a Linux host with hardware events, which this host and its WSL kernel do not provide.
+Because the machine is shared, the bar is judged on the interleaved ratio harness (`benches/src/bin/ratios.rs`, D-106). For each pair it alternates form-net and the competitor in batches of about 4 ms, for 40 rounds, and each side keeps its fastest batch. Load from other work falls on both sides alike, and the minimum is the best estimate of the unloaded cost. The criterion medians (`benches/baseline/2026-10-30/criterion.md`) agree with it within the noise. Hardware counters were not measured: `perf stat` needs a Linux host with hardware events, which this host and its WSL kernel do not provide.
 
 Fairness rules, all enforced in `benches/src/lib.rs` and checked by `benches/tests/agree.rs` (every driver returns the same total of value bytes):
 
@@ -49,48 +49,48 @@ form-net's fastest batch, the competitor's, and the ratio (competitor time over 
 
 | Family | Input | form-net | min | Competitor | min | Ratio | Bar |
 |---|---|---|---|---|---|---|---|
-| urlencoded pairs | login | pairs (collect) | 160 ns | form_urlencoded (collect) | 235 ns | 1.47x | pass |
-| urlencoded pairs | login | pairs (no collect) | 125 ns | form_urlencoded (no collect) | 210 ns | 1.68x | pass |
-| urlencoded pairs | login | raw_pairs+decode_into (no collect) | 107 ns | form_urlencoded (no collect) | 209 ns | 1.96x | pass |
-| urlencoded pairs | search | pairs (collect) | 105 ns | form_urlencoded (collect) | 92 ns | 0.88x | below |
-| urlencoded pairs | search | pairs (no collect) | 72 ns | form_urlencoded (no collect) | 71 ns | 0.99x | below |
-| urlencoded pairs | search | raw_pairs+decode_into (no collect) | 69 ns | form_urlencoded (no collect) | 72 ns | 1.04x | below |
-| urlencoded pairs | signup | pairs (collect) | 384 ns | form_urlencoded (collect) | 672 ns | 1.75x | pass |
-| urlencoded pairs | signup | pairs (no collect) | 317 ns | form_urlencoded (no collect) | 628 ns | 1.98x | pass |
-| urlencoded pairs | signup | raw_pairs+decode_into (no collect) | 290 ns | form_urlencoded (no collect) | 629 ns | 2.17x | pass |
-| urlencoded pairs | 1000 fields | pairs (collect) | 19.36 µs | form_urlencoded (collect) | 26.88 µs | 1.39x | pass |
-| urlencoded pairs | 1000 fields | pairs (no collect) | 16.33 µs | form_urlencoded (no collect) | 24.55 µs | 1.50x | pass |
-| urlencoded pairs | 1000 fields | raw_pairs+decode_into (no collect) | 32.42 µs | form_urlencoded (no collect) | 24.99 µs | 0.77x | below |
-| urlencoded pairs | 1 MiB plain | pairs (collect) | 98.24 µs | form_urlencoded (collect) | 888.40 µs | 9.04x | pass |
-| urlencoded pairs | 1 MiB plain | pairs (no collect) | 97.40 µs | form_urlencoded (no collect) | 929.88 µs | 9.55x | pass |
-| urlencoded pairs | 1 MiB plain | raw_pairs+decode_into (no collect) | 202.28 µs | form_urlencoded (no collect) | 944.96 µs | 4.67x | pass |
-| urlencoded pairs | 1 MiB escaped | pairs (collect) | 370.36 µs | form_urlencoded (collect) | 900.80 µs | 2.43x | pass |
-| urlencoded pairs | 1 MiB escaped | pairs (no collect) | 331.71 µs | form_urlencoded (no collect) | 887.44 µs | 2.68x | pass |
-| urlencoded pairs | 1 MiB escaped | raw_pairs+decode_into (no collect) | 320.23 µs | form_urlencoded (no collect) | 871.65 µs | 2.72x | pass |
-| urlencoded struct | signup | form! | 465 ns | serde_urlencoded | 740 ns | 1.59x | pass |
-| urlencoded serialize | 10 pairs | serialize_urlencoded | 152 ns | form_urlencoded | 344 ns | 2.26x | pass |
-| multipart stream | login, whole | MultipartParser | 670 ns | multer | 2.32 µs | 3.46x | pass |
-| multipart stream | avatar 64 KiB, whole | MultipartParser | 2.54 µs | multer | 5.28 µs | 2.08x | pass |
-| multipart stream | avatar 64 KiB, 65536 B chunks | MultipartParser | 2.56 µs | multer | 5.22 µs | 2.03x | pass |
-| multipart stream | avatar 64 KiB, 1500 B chunks | MultipartParser | 3.20 µs | multer | 7.85 µs | 2.45x | pass |
-| multipart stream | 100 parts, whole | MultipartParser | 15.08 µs | multer | 63.52 µs | 4.21x | pass |
-| multipart stream | 100 parts, 1500 B chunks | MultipartParser | 15.37 µs | multer | 63.77 µs | 4.15x | pass |
-| multipart stream | document 10 MiB, whole | MultipartParser | 751.69 µs | multer | 1.48 ms | 1.97x | pass |
-| multipart stream | document 10 MiB, 65536 B chunks | MultipartParser | 752.11 µs | multer | 3.53 ms | 4.69x | pass |
-| multipart stream | document 10 MiB, 1500 B chunks | MultipartParser | 933.73 µs | multer | 3.37 ms | 3.60x | pass |
-| multipart stream | all CR 1 MiB, whole | MultipartParser | 66.66 µs | multer | 165.22 µs | 2.48x | pass |
-| multipart stream | all CR 1 MiB, 65536 B chunks | MultipartParser | 67.56 µs | multer | 335.97 µs | 4.97x | pass |
-| multipart stream | all CR 1 MiB, 1500 B chunks | MultipartParser | 92.42 µs | multer | 227.02 µs | 2.46x | pass |
-| multipart stream | near-miss 1 MiB, whole | MultipartParser | 123.48 µs | multer | 165.11 µs | 1.34x | pass |
-| multipart stream | near-miss 1 MiB, 65536 B chunks | MultipartParser | 115.10 µs | multer | 333.74 µs | 2.90x | pass |
-| multipart stream | near-miss 1 MiB, 1500 B chunks | MultipartParser | 160.64 µs | multer | 212.24 µs | 1.32x | pass |
-| multipart stream | near-miss in the middle 1 MiB, whole | MultipartParser | 139.55 µs | multer | 375.32 µs | 2.69x | pass |
-| multipart stream | near-miss in the middle 1 MiB, 65536 B chunks | MultipartParser | 140.07 µs | multer | 513.95 µs | 3.67x | pass |
-| multipart stream | near-miss in the middle 1 MiB, 1500 B chunks | MultipartParser | 161.69 µs | multer | 418.48 µs | 2.59x | pass |
-| multipart buffered | login | parse_multipart | 932 ns | multipart 0.18 | 1.27 µs | 1.36x | pass |
-| multipart buffered | avatar 64 KiB | parse_multipart | 2.80 µs | multipart 0.18 | 4.05 µs | 1.44x | pass |
-| multipart buffered | batch 20 x 1 MiB | parse_multipart | 1.32 ms | multer | 3.04 ms | 2.31x | pass |
-| multipart to disk | document 10 MiB | UploadSession + Store::temp | 3.95 ms | multipart 0.18 SaveBuilder | 8.23 ms | 2.09x | pass |
+| urlencoded pairs | login | pairs (collect) | 156 ns | form_urlencoded (collect) | 226 ns | 1.45x | pass |
+| urlencoded pairs | login | pairs (no collect) | 126 ns | form_urlencoded (no collect) | 218 ns | 1.74x | pass |
+| urlencoded pairs | login | raw_pairs+decode_into (no collect) | 105 ns | form_urlencoded (no collect) | 219 ns | 2.08x | pass |
+| urlencoded pairs | search | pairs (collect) | 104 ns | form_urlencoded (collect) | 91 ns | 0.88x | below |
+| urlencoded pairs | search | pairs (no collect) | 75 ns | form_urlencoded (no collect) | 70 ns | 0.94x | below |
+| urlencoded pairs | search | raw_pairs+decode_into (no collect) | 77 ns | form_urlencoded (no collect) | 70 ns | 0.91x | below |
+| urlencoded pairs | signup | pairs (collect) | 380 ns | form_urlencoded (collect) | 668 ns | 1.76x | pass |
+| urlencoded pairs | signup | pairs (no collect) | 316 ns | form_urlencoded (no collect) | 624 ns | 1.97x | pass |
+| urlencoded pairs | signup | raw_pairs+decode_into (no collect) | 273 ns | form_urlencoded (no collect) | 634 ns | 2.32x | pass |
+| urlencoded pairs | 1000 fields | pairs (collect) | 19.02 µs | form_urlencoded (collect) | 25.51 µs | 1.34x | pass |
+| urlencoded pairs | 1000 fields | pairs (no collect) | 16.16 µs | form_urlencoded (no collect) | 23.35 µs | 1.44x | pass |
+| urlencoded pairs | 1000 fields | raw_pairs+decode_into (no collect) | 32.10 µs | form_urlencoded (no collect) | 22.99 µs | 0.72x | below |
+| urlencoded pairs | 1 MiB plain | pairs (collect) | 96.33 µs | form_urlencoded (collect) | 767.89 µs | 7.97x | pass |
+| urlencoded pairs | 1 MiB plain | pairs (no collect) | 96.77 µs | form_urlencoded (no collect) | 774.39 µs | 8.00x | pass |
+| urlencoded pairs | 1 MiB plain | raw_pairs+decode_into (no collect) | 170.02 µs | form_urlencoded (no collect) | 769.99 µs | 4.53x | pass |
+| urlencoded pairs | 1 MiB escaped | pairs (collect) | 565.90 µs | form_urlencoded (collect) | 982.40 µs | 1.74x | pass |
+| urlencoded pairs | 1 MiB escaped | pairs (no collect) | 451.69 µs | form_urlencoded (no collect) | 903.10 µs | 2.00x | pass |
+| urlencoded pairs | 1 MiB escaped | raw_pairs+decode_into (no collect) | 313.15 µs | form_urlencoded (no collect) | 902.54 µs | 2.88x | pass |
+| urlencoded struct | signup | form! | 434 ns | serde_urlencoded | 758 ns | 1.75x | pass |
+| urlencoded serialize | 10 pairs | serialize_urlencoded | 147 ns | form_urlencoded | 322 ns | 2.20x | pass |
+| multipart stream | login, whole | MultipartParser | 663 ns | multer | 2.24 µs | 3.38x | pass |
+| multipart stream | avatar 64 KiB, whole | MultipartParser | 2.51 µs | multer | 4.16 µs | 1.66x | pass |
+| multipart stream | avatar 64 KiB, 65536 B chunks | MultipartParser | 2.52 µs | multer | 4.94 µs | 1.96x | pass |
+| multipart stream | avatar 64 KiB, 1500 B chunks | MultipartParser | 3.31 µs | multer | 5.92 µs | 1.79x | pass |
+| multipart stream | 100 parts, whole | MultipartParser | 15.74 µs | multer | 61.91 µs | 3.93x | pass |
+| multipart stream | 100 parts, 1500 B chunks | MultipartParser | 15.97 µs | multer | 61.72 µs | 3.87x | pass |
+| multipart stream | document 10 MiB, whole | MultipartParser | 739.92 µs | multer | 1.44 ms | 1.95x | pass |
+| multipart stream | document 10 MiB, 65536 B chunks | MultipartParser | 738.98 µs | multer | 3.60 ms | 4.87x | pass |
+| multipart stream | document 10 MiB, 1500 B chunks | MultipartParser | 959.24 µs | multer | 3.31 ms | 3.45x | pass |
+| multipart stream | all CR 1 MiB, whole | MultipartParser | 24.94 µs | multer | 147.50 µs | 5.91x | pass |
+| multipart stream | all CR 1 MiB, 65536 B chunks | MultipartParser | 25.50 µs | multer | 314.25 µs | 12.32x | pass |
+| multipart stream | all CR 1 MiB, 1500 B chunks | MultipartParser | 44.72 µs | multer | 199.44 µs | 4.46x | pass |
+| multipart stream | near-miss 1 MiB, whole | MultipartParser | 119.94 µs | multer | 147.69 µs | 1.23x | pass |
+| multipart stream | near-miss 1 MiB, 65536 B chunks | MultipartParser | 120.66 µs | multer | 318.14 µs | 2.64x | pass |
+| multipart stream | near-miss 1 MiB, 1500 B chunks | MultipartParser | 147.01 µs | multer | 198.62 µs | 1.35x | pass |
+| multipart stream | near-miss in the middle 1 MiB, whole | MultipartParser | 150.21 µs | multer | 367.84 µs | 2.45x | pass |
+| multipart stream | near-miss in the middle 1 MiB, 65536 B chunks | MultipartParser | 151.49 µs | multer | 506.46 µs | 3.34x | pass |
+| multipart stream | near-miss in the middle 1 MiB, 1500 B chunks | MultipartParser | 174.09 µs | multer | 395.53 µs | 2.27x | pass |
+| multipart buffered | login | parse_multipart | 917 ns | multipart 0.18 | 1.20 µs | 1.31x | pass |
+| multipart buffered | avatar 64 KiB | parse_multipart | 2.70 µs | multipart 0.18 | 3.90 µs | 1.44x | pass |
+| multipart buffered | batch 20 x 1 MiB | parse_multipart | 1.31 ms | multer | 2.98 ms | 2.27x | pass |
+| multipart to disk | document 10 MiB | UploadSession + Store::temp | 4.17 ms | multipart 0.18 SaveBuilder | 8.59 ms | 2.06x | pass |
 
 ---
 
@@ -99,29 +99,29 @@ form-net's fastest batch, the competitor's, and the ratio (competitor time over 
 | Operation | Input | Target | Measured |
 |---|---|---|---|
 | `FormKind::detect` | browser `Content-Type` | under 100 ns | 114 ns |
-| `raw_pairs` scan | 1 MiB, no escapes | at least 1.5 GB/s | 12.4 GB/s |
+| `raw_pairs` scan | 1 MiB, no escapes | at least 1.5 GB/s | 12.6 GB/s |
 | `decode_into` | 1 MiB, every byte escaped | at least 700 MB/s | 3.9 GB/s |
-| `parse_urlencoded` | 10 fields, 179 bytes | under 400 ns | 379 ns |
-| `Signup::from_urlencoded` | 8 fields, 182 bytes | under 600 ns | 461 ns |
-| `serialize_urlencoded` | 10 pairs | under 300 ns | 133 ns |
-| `MultipartParser` | one 100 MiB file part, random bytes, 64 KiB chunks | at least 3 GB/s | 13.8 GB/s |
-| `MultipartParser` | adversarial, 1 MiB all CR | at least 400 MB/s, linear | 15.5 GB/s |
-| `MultipartParser` | adversarial, 1 MiB near-miss delimiters | at least 400 MB/s, linear | 8.2 GB/s |
-| `MultipartParser` | 100 parts of 10 bytes | under 30 µs | 14.89 µs |
-| `MultipartParser` | 360 B body, 3 text fields | under 1 µs | 656 ns |
-| `parse_multipart` | 1 MiB, 2 files | within 10% of the raw parser | 27.94 µs against 27.50 µs raw (+2%) |
-| split overhead | 65921 B body in 1-byte chunks | linear, under 50 ns per call | 13.8 ns per byte |
-| idea 0.2: work factor | all CR against random data | add `max_work_factor` if 4x or more | 0.85x |
-| idea 0.2: work factor | near-miss against random data | add `max_work_factor` if 4x or more | 1.57x |
-| idea 0.2: work factor | near-miss in the middle against random data | add `max_work_factor` if 4x or more | 1.80x |
-| idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 0 | measure | 17.59 µs |
-| idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 64 | measure | 16.92 µs |
-| idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 512 | measure | 17.17 µs |
+| `parse_urlencoded` | 10 fields, 179 bytes | under 400 ns | 405 ns |
+| `Signup::from_urlencoded` | 8 fields, 182 bytes | under 600 ns | 429 ns |
+| `serialize_urlencoded` | 10 pairs | under 300 ns | 132 ns |
+| `MultipartParser` | one 100 MiB file part, random bytes, 64 KiB chunks | at least 3 GB/s | 13.7 GB/s |
+| `MultipartParser` | adversarial, 1 MiB all CR | at least 400 MB/s, linear | 52.9 GB/s |
+| `MultipartParser` | adversarial, 1 MiB near-miss delimiters | at least 400 MB/s, linear | 8.7 GB/s |
+| `MultipartParser` | 100 parts of 10 bytes | under 30 µs | 15.88 µs |
+| `MultipartParser` | 360 B body, 3 text fields | under 1 µs | 669 ns |
+| `parse_multipart` | 1 MiB, 2 files | within 10% of the raw parser | 21.66 µs against 21.46 µs raw (+1%) |
+| split overhead | 65921 B body in 1-byte chunks | linear, under 50 ns per call | 13.3 ns per byte |
+| idea 0.2: work factor | all CR against random data | add `max_work_factor` if 4x or more | 0.27x |
+| idea 0.2: work factor | near-miss against random data | add `max_work_factor` if 4x or more | 1.64x |
+| idea 0.2: work factor | near-miss in the middle against random data | add `max_work_factor` if 4x or more | 2.04x |
+| idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 0 | measure | 17.12 µs |
+| idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 64 | measure | 16.33 µs |
+| idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 512 | measure | 16.40 µs |
 
 Two targets were estimates that the measurement does not quite meet:
 
 - `FormKind::detect` takes 114 ns against an estimate of 100 ns. It runs parse-net's full, strict media-type grammar; making it faster belongs in parse-net, and no benchmark family depends on it.
-- `parse_urlencoded` of ten fields came in at 379 ns in the final run (under 400 ns) and at 419 ns in an earlier one; it sits at the estimate.
+- `parse_urlencoded` of ten fields came in at 405 ns in this run, and at 379 ns and 419 ns in earlier ones; it sits at the estimate.
 
 ---
 
@@ -147,6 +147,24 @@ The multipart parser's one allocation is its buffer (`multipart_buffer_len`), ma
 
 ---
 
+## What 0.7 changed
+
+0.7 added checks, and the matcher they need keeps the speed. The search anchors on a CR or LF followed by `-`, so one pass finds delimiters and bare line breaks (D-113). Around a chunk's edges and after a miss it compares a word at a time where the automata would step a byte at a time (D-117).
+
+| Input | 0.6.0 | 0.7.0 | Why |
+|---|---|---|---|
+| all CR, 1 MiB | 66.66 µs | 24.94 µs | a line break alone is no longer a stop; the `-` after it is |
+| near-miss, 1 MiB, whole | 123.48 µs | 119.94 µs | a miss resumes at the byte that differed |
+| near-miss, 1 MiB, 1,500-byte chunks | 160.64 µs | 147.01 µs | a compare per chunk edge |
+| near-miss in the middle, 1 MiB | 139.55 µs | 150.21 µs | slower by 8%: a word-wise compare against the 0.6 whole compare; still 2.45x multer |
+| 100 parts of 10 bytes | 15.08 µs | 15.76 µs | slower by 4%: the bare-break state per part |
+
+Some ratios fell with form-net's time unchanged, because the competitor's minimum fell on a quieter machine: the avatar against multer (form-net 2.54 to 2.51 µs, multer 5.28 to 4.16 µs), 1 MiB plain against form_urlencoded (97 to 97 µs, 930 to 774 µs).
+
+One number depends on the build. `pairs` on 1 MiB of escapes reads 332 µs in 0.6.0 and 452 µs here, with no urlencoded code changed: built with this crate's release profile (fat LTO, one codegen unit) the 0.7.0 code and the code before it both read 326 to 334 µs, so the move is code placement under the default 16 codegen units. It stays well past the bar (2.00x) and is on the polish list (`dev/ROADMAP.md`).
+
+---
+
 ## What 0.6 changed, and why it is faster
 
 | Change | Decision | Effect |
@@ -162,7 +180,7 @@ Every one is safe Rust (`#![forbid(unsafe_code)]` is unchanged), and every one k
 
 ## Two ideas measured (PLAN 14)
 
-- **A work budget (0.2).** The idea: refuse a body by the work the matcher does, if hostile shapes cost far more per byte than normal data. Measured cost per byte against random file data: all CR 0.77x, near-miss delimiters 1.60x, near misses in the middle 1.88x. The trigger was 4x; no limit is added (D-107).
+- **A work budget (0.2).** The idea: refuse a body by the work the matcher does, if hostile shapes cost far more per byte than normal data. Measured cost per byte against random file data: all CR 0.27x, near-miss delimiters 1.64x, near misses in the middle 2.04x. The trigger was 4x; no limit is added (D-107).
 - **A first-bytes fingerprint (0.6).** The idea: let customs-sec skip sniffing for common types. A 64 KiB upload costs the same with `sniff_bytes` 0, 64, or 512 (17.2, 16.4, 16.6 µs), so there is nothing to save (D-107).
 
 A cost found on the way: a 64 KiB upload kept in memory spends most of its 10 µs wiping the file's bytes when it is dropped, because crypt-io's wipe writes one volatile byte at a time. A word-wide wipe in crypt-io would cut that about eightfold; it is a change for crypt-io, not form-net.
@@ -175,13 +193,13 @@ The comparison below was checked against each crate's source code at the version
 
 ### multipart
 
-| | form-net 0.6 | multer 3.1.0 | multipart 0.18.0 (server) |
+| | form-net 0.7 | multer 3.1.0 | multipart 0.18.0 (server) |
 |---|---|---|---|
 | model | sans-IO, any split; sync reader; async-free | async `Stream` of `Bytes` | sync `Read` |
 | `no_std` core | yes, without `alloc` | no | no |
 | `unsafe` in the crate | forbidden | forbidden (`#![forbid(unsafe_code)]`) | none |
 | third-party runtime dependencies | none (crypt-io's audited zeroize and subtle only) | 8 | 10 for server use |
-| boundary search | safe SWAR, CRLF anchored | `memchr::memmem` (SIMD) | `twoway` |
+| boundary search | safe SWAR, anchored on a line break and `-` | `memchr::memmem` (SIMD) | `twoway` |
 | limits by default | every one finite | all size limits unlimited (`u64::MAX`); 32 headers per part | `SaveBuilder`: 8 MiB per field, 256 fields; `read_entry`: none |
 | part, file, name, header-size, preamble, epilogue limits | all | none (whole stream only) | part count with `SaveBuilder` only; 4 headers per part |
 | a delimiter followed by other bytes | refused | refused | refused |
@@ -199,7 +217,7 @@ The comparison below was checked against each crate's source code at the version
 
 ### urlencoded
 
-| | form-net 0.6 | form_urlencoded 1.2.2 | serde_urlencoded 0.7.1 | serde_qs 1.1.3 |
+| | form-net 0.7 | form_urlencoded 1.2.2 | serde_urlencoded 0.7.1 | serde_qs 1.1.3 |
 |---|---|---|---|---|
 | algorithm | WHATWG, strict | WHATWG | WHATWG (through form_urlencoded) | its own, with brackets |
 | invalid UTF-8 | refused | replaced (lossy) | replaced | refused |

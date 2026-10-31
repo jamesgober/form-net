@@ -33,7 +33,7 @@ documentation = "https://docs.rs/form-net"
 authors = ["James Gober <me@jamesgober.com>"]
 
 # The fuzz crate is its own workspace and never ships.
-exclude = ["/fuzz/", "/benches/"]
+exclude = ["/fuzz/", "/benches/", "/tools/"]
 
 [package.metadata.docs.rs]
 all-features = true
