@@ -204,20 +204,24 @@ No growth: the second half's worst sample is within the first half's on every me
 
 ### Fuzzing (T-29)
 
-Every target ran for 24 hours, all 12 at once at the lowest CPU priority, with a 2 GiB memory limit, on the code that ships (nightly `cargo fuzz`, optimised build, Linux on WSL2), from 2026-10-29 20:28 UTC to 2026-10-30 20:28 UTC. No crash, no timeout, no memory-limit stop: every target's artifact directory is empty.
+Every target ran for 24 hours on the code that ships (after D-117), all 12 at once at the lowest CPU priority, with a 2 GiB memory limit (nightly `cargo fuzz`, optimised build, Linux on WSL2), from 2026-11-02 15:43 UTC to 2026-11-03 15:51 UTC. No crash, no memory-limit stop, no real timeout: every target's artifact directory is empty at the end.
 
-| Target | Runs |
-|---|---|
-| `fuzz_boundary` | 14,088,662,988 |
-| `fuzz_decode` | 11,280,304,294 |
-| `fuzz_detect` | 8,726,806,246 |
-| `fuzz_extract` | 4,205,048,795 |
-| `fuzz_filename` | 2,295,222,773 |
-| `fuzz_multipart` | 1,538,070,966 |
-| `fuzz_multipart_differential` | 1,891,435,055 |
-| `fuzz_part_headers` | 2,057,411,053 |
-| `fuzz_raw_pairs` | 3,591,307,564 |
-| `fuzz_upload_session` | 2,060,577,359 |
-| `fuzz_urlencoded_stream` | 3,579,352,856 |
-| `fuzz_writer_roundtrip` | 976,938,896 |
-| **Total** | **56,291,138,845** |
+Eight targets were stopped once each by a false timeout. libFuzzer times a unit on the wall clock, and the WSL2 clock stepped backwards during the run (the kernel logged it 54 times), so a unit read as running for -1 seconds, which libFuzzer's unsigned compare takes as past any limit. Each of those eight inputs replays in milliseconds. The target was resumed from its corpus with the time it had already run counted (D-118), so each ran its full 24 hours with the timeout check on.
+
+| Target | Runs | Stopped by a false timeout at |
+|---|---|---|
+| `fuzz_boundary` | 3,854,120,074 | 59,823 s |
+| `fuzz_decode` | 3,175,598,276 | 10,315 s |
+| `fuzz_detect` | 2,606,521,725 | |
+| `fuzz_extract` | 974,887,339 | 10,315 s |
+| `fuzz_filename` | 594,846,027 | 59,824 s |
+| `fuzz_multipart` | 388,030,052 | 59,823 s |
+| `fuzz_multipart_differential` | 466,090,813 | |
+| `fuzz_part_headers` | 550,069,485 | |
+| `fuzz_raw_pairs` | 952,742,629 | 10,315 s |
+| `fuzz_upload_session` | 541,323,210 | 10,315 s |
+| `fuzz_urlencoded_stream` | 949,518,857 | |
+| `fuzz_writer_roundtrip` | 269,026,383 | 59,823 s |
+| **Total** | **15,322,774,870** | |
+
+The run counts are about a quarter of the earlier 24-hour run's 56.3 billion (on the code before D-117, also clean): this machine was shared all day with other work at normal priority, while the fuzzers ran at the lowest. Each target's corpus carried over from the earlier runs.
