@@ -120,7 +120,7 @@ Every item has an id (`#7`), a **grade**, a **tier**, the **version** that ships
 | 2 | configuration: explicit `Limits` and `Policy`, inspectors, stores |
 | 3 | the full allocation-free surface, for other libraries and drivers |
 
-Costs are targets marked **[est.]** until `0.6.0` measures them; `docs/PERFORMANCE.md` will hold the measured numbers.
+Costs marked **[est.]** are the design's targets; `docs/PERFORMANCE.md` holds the measured numbers (since `0.6.0`).
 
 ### Feature flags
 

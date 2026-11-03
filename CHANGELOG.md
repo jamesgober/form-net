@@ -11,7 +11,14 @@
 
 ## [Unreleased]
 
-Hardening (0.7).
+---
+
+## [0.7.0] - 2026-11-03
+
+Hardening: a capture corpus, a mutation generator, a multer differential, an
+attack test for every threat, 24 hours of fuzzing on every target, and a
+4-hour soak. Three readings where another parser could disagree with
+form-net about a body are now refused.
 
 ### Added
 
@@ -24,6 +31,8 @@ Hardening (0.7).
 - The 4-hour upload soak (`tests/soak.rs`, NFR-15).
 - An attack test for every threat T-1 to T-38 (T-29 is the fuzzing itself).
 - A multer differential (`benches`, `differential`).
+- `docs/SECURITY.md`: the threat model's attack tests, the corpus, the
+  differential log, and the soak and fuzz results.
 
 ### Changed
 
@@ -297,7 +306,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jamesgober/form-net/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/form-net/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/form-net/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/form-net/compare/v0.3.0...v0.4.0
