@@ -137,7 +137,7 @@ fn browser_multipart() -> Vec<Record> {
 fn test_attack_t15_browser_captures_parse_to_their_fields() {
     let dirs = captures("browsers");
     let families: Vec<String> = dirs.iter().map(|d| family(d)).collect();
-    for required in ["chrome", "edge"] {
+    for required in ["chrome", "edge", "firefox"] {
         assert!(
             families.iter().any(|f| f == required),
             "no {required} capture"
