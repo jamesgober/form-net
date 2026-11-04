@@ -48,7 +48,7 @@ fn open_handles() -> usize {
 }
 
 #[test]
-fn test_truncated_at_every_byte_leaves_nothing() {
+fn test_attack_t8_abort_at_every_byte_leaves_nothing() {
     let _serial = SERIAL
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

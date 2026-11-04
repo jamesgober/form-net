@@ -6,6 +6,9 @@
 /target/
 **/*.rs.bk
 
+# Python bytecode from tools/
+__pycache__/
+
 # Editor & OS junk
 /.vscode
 .DS_Store

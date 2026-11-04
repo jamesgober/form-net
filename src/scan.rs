@@ -57,40 +57,50 @@ fn word(hay: &[u8], at: usize) -> u64 {
         .map_or(0, |c| u64::from_le_bytes(*c))
 }
 
-/// The index of the first `a` at or after `from` that is followed by `b`,
-/// or of an `a` that is the last byte of `hay` (the pair may complete in the
-/// next chunk), or `hay.len()`.
+/// Whether `c` ends a line to some reader: CR or LF.
+#[inline]
+pub(crate) const fn is_break(c: u8) -> bool {
+    c == b'\r' || c == b'\n'
+}
+
+/// The index of the first CR or LF at or after `from` that is followed by
+/// `-`, or of a CR or LF that is the last byte of `hay` (the pair may
+/// complete in the next chunk), or `hay.len()`.
 ///
-/// Thirty-two positions per step: four words are matched against `a`, and
-/// only a word that holds an `a` has the word one byte on matched against
-/// `b`. So data with few `a` bytes is crossed at the cost of four matches
-/// per 32 bytes, and data made of `a` bytes with no `b` after them is still
+/// Thirty-two positions per step: four words one byte on are matched
+/// against `-`, and only a word that holds one has the word before it
+/// matched against CR and LF. So data with few `-` bytes is crossed at the
+/// cost of four matches per 32 bytes, and data made of line breaks (with no
+/// `-` after them) or of dashes (with no line break before them) is still
 /// crossed 32 bytes at a time.
 #[inline]
-pub(crate) fn find_pair(hay: &[u8], from: usize, a: u8, b: u8) -> usize {
+pub(crate) fn find_break_dash(hay: &[u8], from: usize) -> usize {
     let mut i = from;
-    // Thirty-two positions per step while 33 bytes remain (the `b` words
-    // read one byte past the block). One OR of four `a` masks decides most
-    // blocks; only a block holding an `a` looks at the words for `b`.
+    // Thirty-two positions per step while 33 bytes remain (the `-` words
+    // read one byte past the block). One OR of four masks decides most
+    // blocks; only a block holding a `-` looks for the line break.
     while let Some(block) = hay.get(i..i.wrapping_add(33)) {
-        let m = [
-            matches(word(block, 0), a),
-            matches(word(block, 8), a),
-            matches(word(block, 16), a),
-            matches(word(block, 24), a),
+        let d = [
+            matches(word(block, 1), b'-'),
+            matches(word(block, 9), b'-'),
+            matches(word(block, 17), b'-'),
+            matches(word(block, 25), b'-'),
         ];
-        if m[0] | m[1] | m[2] | m[3] != 0 {
-            for (k, &mk) in m.iter().enumerate() {
-                if mk == 0 {
+        if d[0] | d[1] | d[2] | d[3] != 0 {
+            for (k, &dk) in d.iter().enumerate() {
+                if dk == 0 {
                     continue;
                 }
                 let base = k.wrapping_mul(8);
-                let mut hits = mk & matches(word(block, base.wrapping_add(1)), b);
+                let w = word(block, base);
+                let mut hits = dk & (matches(w, b'\r') | matches(w, b'\n'));
                 while hits != 0 {
                     // The zero-byte test can set a bit above a true match;
                     // each candidate is checked against the bytes.
                     let at = base.wrapping_add((hits.trailing_zeros() / 8) as usize);
-                    if block.get(at) == Some(&a) && block.get(at.wrapping_add(1)) == Some(&b) {
+                    if block.get(at).is_some_and(|&c| is_break(c))
+                        && block.get(at.wrapping_add(1)) == Some(&b'-')
+                    {
                         return i.wrapping_add(at);
                     }
                     hits &= hits.wrapping_sub(1);
@@ -100,16 +110,31 @@ pub(crate) fn find_pair(hay: &[u8], from: usize, a: u8, b: u8) -> usize {
         i = i.wrapping_add(32);
     }
     while let Some(&c) = hay.get(i) {
-        if c == a {
+        if is_break(c) {
             match hay.get(i.wrapping_add(1)) {
-                None => return i,
-                Some(&next) if next == b => return i,
+                None | Some(b'-') => return i,
                 _ => {}
             }
         }
         i = i.wrapping_add(1);
     }
     hay.len()
+}
+
+/// How many leading bytes `a` and `b` share, eight at a time.
+#[inline]
+pub(crate) fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    let mut n = 0usize;
+    let (mut x, mut y) = (a.chunks_exact(8), b.chunks_exact(8));
+    for (p, q) in (&mut x).zip(&mut y) {
+        let diff = word_at(p) ^ word_at(q);
+        if diff != 0 {
+            return n.wrapping_add((diff.trailing_zeros() / 8) as usize);
+        }
+        n = n.wrapping_add(8);
+    }
+    let (p, q) = (a.get(n..).unwrap_or(&[]), b.get(n..).unwrap_or(&[]));
+    n.wrapping_add(p.iter().zip(q).take_while(|(c, d)| c == d).count())
 }
 
 /// The index of the first `byte` in `hay` at or after `from`, or
@@ -136,6 +161,20 @@ pub(crate) fn count_byte(hay: &[u8], byte: u8) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_common_prefix_at_every_length_and_difference() {
+        let a: [u8; 40] = core::array::from_fn(|i| i as u8);
+        for len in 0..=a.len() {
+            assert_eq!(super::common_prefix(&a[..len], &a), len);
+            assert_eq!(super::common_prefix(&a, &a[..len]), len);
+            for at in 0..len {
+                let mut b = a;
+                b[at] ^= 0x80;
+                assert_eq!(super::common_prefix(&a[..len], &b[..len]), at);
+            }
+        }
+    }
+
     use super::*;
 
     fn naive(hay: &[u8], from: usize, set: &[u8]) -> usize {
@@ -156,16 +195,17 @@ mod tests {
         }
     }
 
-    fn naive_pair(hay: &[u8], from: usize, a: u8, b: u8) -> usize {
+    fn naive_break_dash(hay: &[u8], from: usize) -> usize {
         (from..hay.len())
-            .find(|&i| hay[i] == a && hay.get(i + 1).is_none_or(|&n| n == b))
+            .find(|&i| is_break(hay[i]) && hay.get(i + 1).is_none_or(|&n| n == b'-'))
             .unwrap_or(hay.len())
     }
 
     #[test]
-    fn test_find_pair_matches_naive_on_dense_and_borrow_patterns() {
-        // CR and LF in every arrangement, high bytes that exercise the
-        // borrow of the zero-byte test, and every start position.
+    fn test_find_break_dash_matches_naive_on_dense_and_borrow_patterns() {
+        // CR, LF, and `-` in every arrangement, the other bytes the mask
+        // admits (0x08 to 0x0F), high bytes that exercise the borrow of the
+        // zero-byte test, and every start position.
         let mut seed = 7u64;
         for len in 0..64 {
             for _ in 0..40 {
@@ -174,13 +214,15 @@ mod tests {
                         seed ^= seed << 13;
                         seed ^= seed >> 7;
                         seed ^= seed << 17;
-                        [b'\r', b'\n', 0x0c, 0x0e, 0x8d, 0x8a, b'x', 0x00][(seed % 8) as usize]
+                        [
+                            b'\r', b'\n', b'-', 0x08, 0x0c, 0x0e, 0x8d, 0x8a, 0xad, b'x', 0x00,
+                        ][(seed % 11) as usize]
                     })
                     .collect();
                 for from in 0..=len {
                     assert_eq!(
-                        find_pair(&hay, from, b'\r', b'\n'),
-                        naive_pair(&hay, from, b'\r', b'\n'),
+                        find_break_dash(&hay, from),
+                        naive_break_dash(&hay, from),
                         "{hay:?} from {from}"
                     );
                 }

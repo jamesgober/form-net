@@ -141,6 +141,12 @@ fn has_escaped_quote(s: &[u8]) -> bool {
     s.windows(2).any(|w| w == b"\\\"")
 }
 
+/// Whether `w` is a token that starts or ends with `'`: some readers take
+/// single quotes as quoting and strip them (D-114).
+fn single_quoted(w: &Word<'_>) -> bool {
+    matches!(w, Word::Token(t) if t.first() == Some(&b'\'') || t.last() == Some(&b'\''))
+}
+
 /// Reads a complete header block (ending with its empty line).
 pub(crate) fn read_block(
     block: &[u8],
@@ -249,6 +255,13 @@ pub(crate) fn read_block(
     let mut filename = None;
     let mut filename_ext = None;
     for q in p.iter() {
+        let known = is(q.name, b"name") || is(q.name, b"filename") || is(q.name, b"filename*");
+        if known && q.name.iter().any(u8::is_ascii_uppercase) {
+            // `NAME=` is `name` to RFC 7578 readers and an unknown parameter
+            // to readers that match it exactly (multer 3.1, for one);
+            // browsers write it in lower case (D-116).
+            return Err(FormError::syntax(SyntaxError::MalformedParameter, at));
+        }
         if is(q.name, b"name") {
             name = Some(q.value);
         } else if is(q.name, b"filename") {
@@ -266,6 +279,12 @@ pub(crate) fn read_block(
     let Some(name) = name else {
         return Err(FormError::syntax(SyntaxError::MissingName, at));
     };
+    if single_quoted(&name) || filename.as_ref().is_some_and(single_quoted) {
+        // `name='x'` is the token `'x'` to RFC 9110 readers and `x` to
+        // readers that take single quotes as quoting; browsers always
+        // double-quote (D-114).
+        return Err(FormError::syntax(SyntaxError::MalformedParameter, at));
+    }
     let name_raw = word_raw(&name);
     if name_raw.contains(&b'\\') {
         // A backslash in a name reads as a quoted pair to RFC 9110 readers

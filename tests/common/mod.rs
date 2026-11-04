@@ -179,6 +179,17 @@ pub fn reference(boundary: &[u8], body: &[u8]) -> Option<Vec<Record>> {
         let head = std::str::from_utf8(&body[pos..head_end]).ok()?;
         let data_start = head_end + 4;
         let data_end = find(body, &delim, data_start)?;
+        // `--boundary` at the start of the data or after a lone CR or LF
+        // is refused (D-113).
+        let dashes = &delim[2..];
+        let data = &body[data_start..data_end];
+        if data.starts_with(dashes)
+            || data
+                .windows(dashes.len() + 1)
+                .any(|w| (w[0] == b'\r' || w[0] == b'\n') && &w[1..] == dashes)
+        {
+            return None;
+        }
         let line = head.strip_prefix("Content-Disposition: form-data; ")?;
         let mut name = None;
         let mut filename = None;

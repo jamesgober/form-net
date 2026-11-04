@@ -1,0 +1,5 @@
+------geckoformboundarye4522e7a9ba8d749eccc7e73b89f22f2
+Content-Disposition: form-data; name="back\slash"
+
+backslash in the name, which form-net refuses (D-082)
+------geckoformboundarye4522e7a9ba8d749eccc7e73b89f22f2--

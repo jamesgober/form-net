@@ -196,8 +196,16 @@ fn test_attack_t34_header_injection_refused() {
 }
 
 #[test]
-fn test_data_containing_the_delimiter_is_refused_across_splits() {
-    for data in [&b"--X"[..], b"a\r\n--X", b"a\r\n--X--"] {
+fn test_attack_t35_data_containing_the_delimiter_is_refused_across_splits() {
+    // A lone CR or LF before `--X` is refused too: the parser refuses it
+    // (D-113).
+    for data in [
+        &b"--X"[..],
+        b"a\r\n--X",
+        b"a\r\n--X--",
+        b"a\n--X",
+        b"a\r--X",
+    ] {
         for split in 0..=data.len() {
             let mut w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"X").unwrap());
             w.file_start("f", "a", None).unwrap();

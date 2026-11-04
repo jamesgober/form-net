@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn test_planted_file_is_never_opened() {
+    fn test_attack_t9_planted_file_is_never_opened() {
         // T-9: an attacker who guessed the next name and made the file first.
         let d = private();
         let planted = d.join("upload-planted.part");
@@ -160,7 +160,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_planted_link_is_never_followed() {
+    fn test_attack_t9_planted_link_is_never_followed() {
         let d = private();
         let target = d.join("target");
         let link = d.join("upload-link.part");

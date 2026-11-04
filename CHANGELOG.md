@@ -13,6 +13,46 @@
 
 ---
 
+## [0.7.0] - 2026-11-04
+
+Hardening: a capture corpus, a mutation generator, a multer differential, an
+attack test for every threat, 24 hours of fuzzing on every target, and a
+4-hour soak. Three readings where another parser could disagree with
+form-net about a body are now refused.
+
+### Added
+
+- A capture corpus (`tests/corpus`): the bodies Chrome 155, Edge 155,
+  Firefox 159, Safari 26, curl 8.5, Python requests 2.31, and Go 1.27 send
+  for a fixed test page, with the tools that capture them (`tools/capture`),
+  checked whole and at every split. A `Capture` workflow captures Safari on
+  a macOS runner (D-119).
+- A WAFFLED-style mutation generator: every mutation of every captured body
+  is refused or reads exactly as the original.
+- The 4-hour upload soak (`tests/soak.rs`, NFR-15).
+- An attack test for every threat T-1 to T-38 (T-29 is the fuzzing itself).
+- A multer differential (`benches`, `differential`).
+- `docs/SECURITY.md`: the threat model's attack tests, the corpus, the
+  differential log, and the soak and fuzz results.
+
+### Changed
+
+- `--boundary` after a lone CR or LF, or as the first bytes of a part's
+  data, is refused as `BoundaryInContent`; the writer refuses such data
+  too. Readers that accept lone line breaks before a delimiter saw more
+  parts than form-net (D-113).
+- An unquoted `name` or `filename` that starts or ends with `'` is refused
+  as `MalformedParameter` (D-114).
+- `name`, `filename`, and `filename*` written other than in lower case are
+  refused as `MalformedParameter`: multer reads `NAME=` as no name (D-116).
+- The multipart delimiter search anchors on a CR or LF followed by `-`, so
+  one pass finds delimiters and bare breaks; matches across chunks are
+  compared whole, and a miss resumes at the byte that differed (D-117).
+- A new benchmark baseline (`benches/baseline/2026-10-30`), and
+  `docs/PERFORMANCE.md` measured for 0.7.
+
+---
+
 ## [0.6.0] - 2026-10-29
 
 Optimisation: measured against the other Rust form parsers, and at least 20%
@@ -267,7 +307,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jamesgober/form-net/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/form-net/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/form-net/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/form-net/compare/v0.3.0...v0.4.0

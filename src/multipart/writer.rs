@@ -262,6 +262,8 @@ mod writer_std {
         poisoned: bool,
         /// The delimiter matcher's state over the current part's data.
         k: usize,
+        /// The bare-break matcher's state (D-113).
+        m: usize,
         /// Text normalisation: the last byte written was a CR.
         pending_cr: bool,
     }
@@ -300,6 +302,7 @@ mod writer_std {
                 in_file: false,
                 poisoned: false,
                 k: 2,
+                m: 1,
                 pending_cr: false,
             }
         }
@@ -500,20 +503,24 @@ mod writer_std {
             self.first = false;
             // The data starts right after a CRLF: as if it had been seen.
             self.k = 2;
+            self.m = 1;
             Ok(())
         }
 
-        /// Writes part data, scanning it for the delimiter when verifying.
+        /// Writes part data, scanning it for the delimiter, and for
+        /// `--boundary` after a lone CR or LF, when verifying: the parser
+        /// refuses both (D-113).
         fn data(&mut self, bytes: &[u8]) -> Result<(), FormError> {
             if self.verify {
-                let (k, found) = self.boundary.run(self.k, bytes);
-                if found.is_some() {
+                let (k, m, found) = self.boundary.run(self.k, self.m, bytes);
+                if found != crate::multipart::boundary::Hit::None {
                     return Err(FormError::syntax(
                         SyntaxError::BoundaryInContent,
                         Location::NONE,
                     ));
                 }
                 self.k = k;
+                self.m = m;
             }
             IoOut(&mut self.out).put(bytes)
         }
