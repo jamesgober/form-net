@@ -10,7 +10,8 @@ its Content-Type and the browser's User-Agent.
     python3 tools/capture/capture.py --browser "/path/to/chrome" --headless
         launches the browser on a private profile and waits for every form;
     python3 tools/capture/capture.py
-        prints a URL to open by hand (Safari, or any browser), then waits.
+        prints a URL to open by hand, or through webdriver.py, then waits.
+        The Capture workflow does this for Safari on a macOS runner.
 
 Captures land in tests/corpus/browsers/<browser>-<major version>/.
 Standard library only.

@@ -97,7 +97,7 @@ Browsers send none of these. The capture corpus below proves that every body cur
 
 ## The capture corpus
 
-`tests/corpus` holds the bodies real browsers and clients sent for one fixed page (`tools/capture/capture.py`): text with ASCII, non-ASCII, CR LF, and quotes; names with `"`, `%`, and non-ASCII; an empty file input; file names with non-ASCII, `"`, `%`, `\`, and a line break; two files under one name; `_charset_`. `tests/multipart_browsers.rs` checks each whole and at every split (D-115).
+`tests/corpus` holds the bodies real browsers and clients sent for one fixed page (`tools/capture/capture.py`): text with ASCII, non-ASCII, CR LF, and quotes; names with `"`, `%`, and non-ASCII; an empty file input; file names with non-ASCII, `"`, `%`, `\`, and a line break; two files under one name; `_charset_`. `tests/multipart_browsers.rs` checks each whole and at every split, and fails if any of Chrome, Edge, Firefox, or Safari is missing (D-115, D-119).
 
 | Source | Captured | Result |
 |---|---|---|
@@ -106,7 +106,8 @@ Browsers send none of these. The capture corpus below proves that every body cur
 | curl 8.5 | 2026-10-29 | every field read as sent; `"` in a file name arrives as `%22` |
 | Python requests 2.31 | 2026-10-29 | the same |
 | Go 1.27 `mime/multipart` | 2026-10-29 | every field read as sent; a `"` in a file name arrives as `\"`, which form-net refuses (`AmbiguousQuote`): a Go client should not send one |
-| Firefox, Safari | not yet | this machine has neither; `python3 tools/capture/capture.py --browser <path>` (or no argument, to open the page by hand in Safari) adds them |
+| Firefox 159 (headless) | 2026-11-04 | the same bytes as Chrome, but for the boundary |
+| Safari 26 (macOS 26.6, through safaridriver on a GitHub runner) | 2026-11-04 | the same bytes as Chrome, but for the boundary |
 
 A part named with a backslash (`name="back\slash"`), which every browser sends as is, is refused (D-082); the corpus holds it as `refused.body` for each browser.
 

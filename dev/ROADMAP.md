@@ -91,7 +91,7 @@ Exit: every threat has a passing attack test; the soak shows no growth; the diff
 - [x] WAFFLED-style mutation corpus and generator (PLAN 12, `tests/common/waffled.rs`); multer differential triaged (`docs/SECURITY.md`). They found three disagreements, fixed as D-113, D-114, D-116.
 - [x] Attack tests T-1 to T-38 complete (T-29 is the fuzzing).
 - [x] 4-hour soak (NFR-15, `tests/soak.rs`), on the code that ships: 55.5 million uploads, no growth, nothing left at the end. A run before D-117 passed at 56.6 million uploads.
-- [ ] Browser capture corpus (Chrome, Firefox, Safari) refreshed and green (NFR-14); client captures (curl, Python `requests`, Go). Chrome 155, Edge 155, curl 8.5, requests 2.31, and Go 1.27 are captured and green (D-115). Firefox and Safari need a machine that has them: `python3 tools/capture/capture.py --browser <path>`, or no argument to open the page by hand.
+- [x] Browser capture corpus (Chrome, Firefox, Safari) refreshed and green (NFR-14); client captures (curl, Python `requests`, Go). Chrome 155, Edge 155, Firefox 159, Safari 26, curl 8.5, requests 2.31, and Go 1.27 are captured and green (D-115, D-119). Safari is captured by the `Capture` workflow on a macOS runner.
 - [x] `docs/SECURITY.md` complete: the threat model, the deviations, the corpus, the differential log, and the soak and fuzz results on the code that ships.
 - [x] The multipart families measured again on a quiet machine after the D-113 matcher change, and the baseline committed (`benches/baseline/2026-10-30/`). It found near-miss in 1,500-byte chunks below the bar, fixed as D-117. Every multipart family passes; the avatar ratios fell because multer's minimum fell, with form-net's time unchanged.
 

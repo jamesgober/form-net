@@ -13,7 +13,7 @@
 
 ---
 
-## [0.7.0] - 2026-11-03
+## [0.7.0] - 2026-11-04
 
 Hardening: a capture corpus, a mutation generator, a multer differential, an
 attack test for every threat, 24 hours of fuzzing on every target, and a
@@ -23,9 +23,10 @@ form-net about a body are now refused.
 ### Added
 
 - A capture corpus (`tests/corpus`): the bodies Chrome 155, Edge 155,
-  curl 8.5, Python requests 2.31, and Go 1.27 send for a fixed test page,
-  with the tools that capture them (`tools/capture`), checked whole and at
-  every split.
+  Firefox 159, Safari 26, curl 8.5, Python requests 2.31, and Go 1.27 send
+  for a fixed test page, with the tools that capture them (`tools/capture`),
+  checked whole and at every split. A `Capture` workflow captures Safari on
+  a macOS runner (D-119).
 - A WAFFLED-style mutation generator: every mutation of every captured body
   is refused or reads exactly as the original.
 - The 4-hour upload soak (`tests/soak.rs`, NFR-15).
