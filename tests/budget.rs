@@ -87,18 +87,31 @@ fn test_attack_t7_parallel_uploads_never_exceed_the_shared_budget() {
             .quota(watched.clone()),
     );
     let b: Arc<[u8]> = body(2, 6000).into();
+    // The first round holds every upload until all 16 have tried, so 192 KB
+    // is asked of the 64 KB budget however the threads are scheduled.
+    let all_in = Arc::new(std::sync::Barrier::new(16));
     let threads: Vec<_> = (0..16)
         .map(|_| {
-            let (store, b) = (Arc::clone(&store), Arc::clone(&b));
+            let (store, b, all_in) = (Arc::clone(&store), Arc::clone(&b), Arc::clone(&all_in));
             std::thread::spawn(move || {
                 let mut refused = 0;
-                for _ in 0..20 {
+                for round in 0..20 {
                     match upload(&store, &b) {
                         // Hold the files for a moment, then drop them.
-                        Ok(u) => drop(u),
+                        Ok(u) => {
+                            if round == 0 {
+                                all_in.wait();
+                            }
+                            drop(u);
+                        }
                         Err(FormError::Store {
                             reason: StoreError::QuotaExceeded,
-                        }) => refused += 1,
+                        }) => {
+                            if round == 0 {
+                                all_in.wait();
+                            }
+                            refused += 1;
+                        }
                         Err(e) => panic!("{e:?}"),
                     }
                 }
@@ -113,7 +126,7 @@ fn test_attack_t7_parallel_uploads_never_exceed_the_shared_budget() {
     );
     assert_eq!(quota.in_use(), 0, "every reserved byte was released");
     assert_eq!(std::fs::read_dir(&d).unwrap().count(), 0);
-    // 16 threads × 12 KB in flight against 64 KB: some must have been refused.
+    // 16 threads × 12 KB held at once against 64 KB: some must have been refused.
     assert!(refused > 0, "the budget never bit");
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -99,9 +99,9 @@ Exit: every threat has a passing attack test; the soak shows no growth; the diff
 
 Exit: the first site's form routes run on form-net in a test deployment; findings fixed test-first.
 
-- [ ] web-net uses `FormKind`, `FromForm::from_body*`, `UploadSession`, and `form!` end to end on the login and upload routes; customs-sec runs as an `Inspector`; csrf-sec verifies the captured token.
-- [ ] API changes from that use are made now (the last chance before beta), each with a decision-log entry.
-- [ ] Defence idea: refusal digest (PLAN 14).
+- [ ] web-net uses `FormKind`, `FromForm::from_body*`, `UploadSession`, and `form!` end to end on the login and upload routes; customs-sec runs as an `Inspector`; csrf-sec verifies the captured token. Blocked: web-net and customs-sec are not built. Done ahead of them: both routes written as web-net will write them, with a customs test double and csrf-sec 0.9.1's real tokens (`tests/alpha_routes.rs`, D-124), and `TokenCheck` for the token (D-120, `tests/token_check.rs`). Left: the same routes in web-net with the real customs-sec, in a test deployment.
+- [ ] API changes from that use are made now (the last chance before beta), each with a decision-log entry. Made so far: `form!` builder visibility (D-121), the sniff window on by default (D-122), `TokenCheck` (D-120). Open until web-net's own use.
+- [x] Defence idea: refusal digest (PLAN 14): `RefusalDigest`, 5 ns per record (D-123).
 
 ## v0.9.0 - Polish (before any release candidate)
 

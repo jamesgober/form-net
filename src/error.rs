@@ -238,6 +238,32 @@ impl FormError {
         }
     }
 
+    /// The error's counter in a [`RefusalDigest`](crate::RefusalDigest):
+    /// its index in [`SLOT_CODES`], or `None` for an inspector's refusal,
+    /// whose code is the inspector's own.
+    #[cfg(target_has_atomic = "32")]
+    pub(crate) const fn slot(&self) -> Option<usize> {
+        let slot = match self {
+            Self::Limit { limit, .. } => limit.index(),
+            Self::Syntax { reason, .. } => reason.index().wrapping_add(16),
+            Self::Encoding { reason, .. } => reason.index().wrapping_add(36),
+            Self::Policy { reason, .. } => reason.index().wrapping_add(40),
+            Self::Extract { reason, .. } => reason.index().wrapping_add(47),
+            #[cfg(feature = "fs")]
+            Self::Store { reason } => reason.index().wrapping_add(52),
+            Self::UnsupportedMediaType => 55,
+            Self::InvalidLimits { .. } => 56,
+            Self::BufferTooSmall { .. } => 57,
+            #[cfg(feature = "std")]
+            Self::Io { .. } => 58,
+            #[cfg(feature = "std")]
+            Self::Random => 59,
+            Self::Poisoned => 60,
+            Self::Refused { .. } => return None,
+        };
+        Some(slot)
+    }
+
     /// Where the error was found, for input errors and refusals.
     ///
     /// # Examples
@@ -394,6 +420,28 @@ pub enum Limit {
 }
 
 impl Limit {
+    #[cfg(target_has_atomic = "32")]
+    const fn index(self) -> usize {
+        match self {
+            Self::Body => 0,
+            Self::Fields => 1,
+            Self::NameLength => 2,
+            Self::ValueLength => 3,
+            Self::TextTotal => 4,
+            Self::Parts => 5,
+            Self::Files => 6,
+            Self::FileSize => 7,
+            Self::PartHeaderBytes => 8,
+            Self::PartHeaderCount => 9,
+            Self::FilenameLength => 10,
+            Self::Preamble => 11,
+            Self::Epilogue => 12,
+            Self::Padding => 13,
+            Self::TokenLength => 14,
+            Self::Disk => 15,
+        }
+    }
+
     const fn code(self) -> &'static str {
         match self {
             Self::Body => "limit.body",
@@ -529,6 +577,32 @@ pub enum SyntaxError {
 }
 
 impl SyntaxError {
+    #[cfg(target_has_atomic = "32")]
+    const fn index(self) -> usize {
+        match self {
+            Self::InvalidContentType => 0,
+            Self::MissingBoundary => 1,
+            Self::DuplicateBoundary => 2,
+            Self::InvalidBoundary => 3,
+            Self::NoInitialDelimiter => 4,
+            Self::BoundaryInContent => 5,
+            Self::BareLineFeed => 6,
+            Self::MalformedHeaderLine => 7,
+            Self::HeaderFolding => 8,
+            Self::InvalidHeaderName => 9,
+            Self::ControlInHeader => 10,
+            Self::MissingContentDisposition => 11,
+            Self::DuplicateHeader => 12,
+            Self::NotFormData => 13,
+            Self::MissingName => 14,
+            Self::EmptyName => 15,
+            Self::DuplicateParameter => 16,
+            Self::MalformedParameter => 17,
+            Self::AmbiguousQuote => 18,
+            Self::Truncated => 19,
+        }
+    }
+
     const fn code(self) -> &'static str {
         match self {
             Self::InvalidContentType => "syntax.invalid_content_type",
@@ -597,6 +671,16 @@ pub enum EncodingError {
 }
 
 impl EncodingError {
+    #[cfg(target_has_atomic = "32")]
+    const fn index(self) -> usize {
+        match self {
+            Self::InvalidPercent => 0,
+            Self::InvalidUtf8 => 1,
+            Self::UnsupportedCharset => 2,
+            Self::InvalidExtendedValue => 3,
+        }
+    }
+
     const fn code(self) -> &'static str {
         match self {
             Self::InvalidPercent => "encoding.invalid_percent",
@@ -638,6 +722,19 @@ pub enum PolicyRefusal {
 }
 
 impl PolicyRefusal {
+    #[cfg(target_has_atomic = "32")]
+    const fn index(self) -> usize {
+        match self {
+            Self::TransferEncoding => 0,
+            Self::NestedMultipart => 1,
+            Self::UnknownHeader => 2,
+            Self::BothFilenames => 3,
+            Self::ExtendedFilename => 4,
+            Self::TokenFieldLate => 5,
+            Self::DuplicateToken => 6,
+        }
+    }
+
     const fn code(self) -> &'static str {
         match self {
             Self::TransferEncoding => "policy.transfer_encoding",
@@ -682,6 +779,17 @@ pub enum ExtractError {
 }
 
 impl ExtractError {
+    #[cfg(target_has_atomic = "32")]
+    const fn index(self) -> usize {
+        match self {
+            Self::Unknown => 0,
+            Self::Missing => 1,
+            Self::Duplicate => 2,
+            Self::Invalid(_) => 3,
+            Self::WrongKind => 4,
+        }
+    }
+
     const fn code(self) -> &'static str {
         match self {
             Self::Unknown => "extract.unknown",
@@ -703,10 +811,221 @@ impl ExtractError {
     }
 }
 
+/// How many codes form-net itself returns, in every feature mode.
+#[cfg(target_has_atomic = "32")]
+pub(crate) const SLOTS: usize = 61;
+
+/// Every code form-net itself returns, at its [`FormError::slot`].
+#[cfg(target_has_atomic = "32")]
+pub(crate) const SLOT_CODES: [&str; SLOTS] = [
+    "limit.body",
+    "limit.fields",
+    "limit.name_length",
+    "limit.value_length",
+    "limit.text_total",
+    "limit.parts",
+    "limit.files",
+    "limit.file_size",
+    "limit.part_header_bytes",
+    "limit.part_header_count",
+    "limit.filename_length",
+    "limit.preamble",
+    "limit.epilogue",
+    "limit.padding",
+    "limit.token_length",
+    "limit.disk",
+    "syntax.invalid_content_type",
+    "syntax.missing_boundary",
+    "syntax.duplicate_boundary",
+    "syntax.invalid_boundary",
+    "syntax.no_initial_delimiter",
+    "syntax.boundary_in_content",
+    "syntax.bare_line_feed",
+    "syntax.malformed_header_line",
+    "syntax.header_folding",
+    "syntax.invalid_header_name",
+    "syntax.control_in_header",
+    "syntax.missing_content_disposition",
+    "syntax.duplicate_header",
+    "syntax.not_form_data",
+    "syntax.missing_name",
+    "syntax.empty_name",
+    "syntax.duplicate_parameter",
+    "syntax.malformed_parameter",
+    "syntax.ambiguous_quote",
+    "syntax.truncated",
+    "encoding.invalid_percent",
+    "encoding.invalid_utf8",
+    "encoding.unsupported_charset",
+    "encoding.invalid_extended_value",
+    "policy.transfer_encoding",
+    "policy.nested_multipart",
+    "policy.unknown_header",
+    "policy.both_filenames",
+    "policy.extended_filename",
+    "policy.token_field_late",
+    "policy.duplicate_token",
+    "extract.unknown",
+    "extract.missing",
+    "extract.duplicate",
+    "extract.invalid",
+    "extract.wrong_kind",
+    "store.quota_exceeded",
+    "store.not_a_directory",
+    "store.destination_exists",
+    "unsupported_media_type",
+    "invalid_limits",
+    "buffer_too_small",
+    "io",
+    "random",
+    "poisoned",
+];
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use alloc::string::ToString;
+
+    /// One error of every kind form-net returns (the exhaustive `slot` and
+    /// `index` matches make a new variant a compile error until it has a
+    /// slot; this list makes it a test failure until it is here too).
+    pub(crate) fn every_error() -> alloc::vec::Vec<FormError> {
+        use alloc::vec::Vec;
+        let at = Location::NONE;
+        let mut all = Vec::new();
+        for limit in [
+            Limit::Body,
+            Limit::Fields,
+            Limit::NameLength,
+            Limit::ValueLength,
+            Limit::TextTotal,
+            Limit::Parts,
+            Limit::Files,
+            Limit::FileSize,
+            Limit::PartHeaderBytes,
+            Limit::PartHeaderCount,
+            Limit::FilenameLength,
+            Limit::Preamble,
+            Limit::Epilogue,
+            Limit::Padding,
+            Limit::TokenLength,
+            Limit::Disk,
+        ] {
+            all.push(FormError::limit(limit, at));
+        }
+        for reason in [
+            SyntaxError::InvalidContentType,
+            SyntaxError::MissingBoundary,
+            SyntaxError::DuplicateBoundary,
+            SyntaxError::InvalidBoundary,
+            SyntaxError::NoInitialDelimiter,
+            SyntaxError::BoundaryInContent,
+            SyntaxError::BareLineFeed,
+            SyntaxError::MalformedHeaderLine,
+            SyntaxError::HeaderFolding,
+            SyntaxError::InvalidHeaderName,
+            SyntaxError::ControlInHeader,
+            SyntaxError::MissingContentDisposition,
+            SyntaxError::DuplicateHeader,
+            SyntaxError::NotFormData,
+            SyntaxError::MissingName,
+            SyntaxError::EmptyName,
+            SyntaxError::DuplicateParameter,
+            SyntaxError::MalformedParameter,
+            SyntaxError::AmbiguousQuote,
+            SyntaxError::Truncated,
+        ] {
+            all.push(FormError::syntax(reason, at));
+        }
+        for reason in [
+            EncodingError::InvalidPercent,
+            EncodingError::InvalidUtf8,
+            EncodingError::UnsupportedCharset,
+            EncodingError::InvalidExtendedValue,
+        ] {
+            all.push(FormError::encoding(reason, at));
+        }
+        for reason in [
+            PolicyRefusal::TransferEncoding,
+            PolicyRefusal::NestedMultipart,
+            PolicyRefusal::UnknownHeader,
+            PolicyRefusal::BothFilenames,
+            PolicyRefusal::ExtendedFilename,
+            PolicyRefusal::TokenFieldLate,
+            PolicyRefusal::DuplicateToken,
+        ] {
+            all.push(FormError::policy(reason, at));
+        }
+        for reason in [
+            ExtractError::Unknown,
+            ExtractError::Missing,
+            ExtractError::Duplicate,
+            ExtractError::Invalid("not a number"),
+            ExtractError::WrongKind,
+        ] {
+            all.push(FormError::Extract {
+                reason,
+                field: Some("f"),
+            });
+        }
+        #[cfg(feature = "fs")]
+        for reason in [
+            crate::store::StoreError::QuotaExceeded,
+            crate::store::StoreError::NotADirectory,
+            crate::store::StoreError::DestinationExists,
+        ] {
+            all.push(FormError::Store { reason });
+        }
+        all.push(FormError::UnsupportedMediaType);
+        all.push(FormError::InvalidLimits { limit: Limit::Body });
+        all.push(FormError::BufferTooSmall { needed: 1 });
+        #[cfg(feature = "std")]
+        all.push(FormError::Io {
+            kind: std::io::ErrorKind::Other,
+        });
+        #[cfg(feature = "std")]
+        all.push(FormError::Random);
+        all.push(FormError::Poisoned);
+        all
+    }
+
+    #[cfg(target_has_atomic = "32")]
+    #[test]
+    fn test_every_error_has_its_own_slot_holding_its_code() {
+        let mut seen = [false; SLOTS];
+        for e in every_error() {
+            let slot = e.slot().unwrap();
+            assert_eq!(SLOT_CODES[slot], e.code(), "{e:?}");
+            assert!(!seen[slot], "slot {slot} twice");
+            seen[slot] = true;
+        }
+        // Every slot is used in the full build; a build without `fs` or
+        // `std` leaves exactly those slots unused.
+        let unused: alloc::vec::Vec<&str> = (0..SLOTS)
+            .filter(|&i| !seen[i])
+            .map(|i| SLOT_CODES[i])
+            .collect();
+        let mut expected = alloc::vec::Vec::new();
+        if !cfg!(feature = "fs") {
+            expected.extend([
+                "store.quota_exceeded",
+                "store.not_a_directory",
+                "store.destination_exists",
+            ]);
+        }
+        if !cfg!(feature = "std") {
+            expected.extend(["io", "random"]);
+        }
+        assert_eq!(unused, expected);
+        for (i, a) in SLOT_CODES.iter().enumerate() {
+            assert!(!SLOT_CODES[..i].contains(a), "{a} twice");
+        }
+        let refused = FormError::Refused {
+            refusal: Refusal::new(422, "x"),
+            at: Location::NONE,
+        };
+        assert_eq!(refused.slot(), None);
+    }
 
     #[test]
     fn test_status_hint_every_family_maps() {

@@ -421,3 +421,28 @@ mod upload_mut {
         assert_eq!(none.captured_token(), None);
     }
 }
+
+// A private form at module level, as a route module declares it (0.8: the
+// builder once was `pub` whatever the struct, and this did not compile).
+form_net::form! {
+    #[derive(Debug)]
+    struct PrivateLogin {
+        email: String,
+        remember: bool,
+    }
+    ignore = ["csrf_token"];
+}
+
+form_net::form! {
+    pub(crate) struct CrateLogin {
+        pub(crate) email: String,
+    }
+}
+
+#[test]
+fn test_private_and_crate_visible_forms_compile_and_extract() {
+    let p = PrivateLogin::from_urlencoded(b"email=a%40b.example&remember=on&csrf_token=t").unwrap();
+    assert_eq!((p.email.as_str(), p.remember), ("a@b.example", true));
+    let c = CrateLogin::from_urlencoded(b"email=x").unwrap();
+    assert_eq!(c.email, "x");
+}

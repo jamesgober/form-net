@@ -31,7 +31,7 @@ pub(crate) const CHARSET_CAPTURE: usize = 32;
 /// | `max_preamble_bytes` | 1 KiB |
 /// | `max_epilogue_bytes` | 1 KiB |
 /// | `max_padding_bytes` | 32 |
-/// | `sniff_bytes` | 0 |
+/// | `sniff_bytes` | 512 |
 /// | `max_token_bytes` | 128 |
 ///
 /// # Examples
@@ -134,7 +134,7 @@ impl Limits {
         max_preamble_bytes: 1_024,
         max_epilogue_bytes: 1_024,
         max_padding_bytes: 32,
-        sniff_bytes: 0,
+        sniff_bytes: 512,
         max_token_bytes: 128,
     };
 
