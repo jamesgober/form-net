@@ -117,6 +117,11 @@ form-net's fastest batch, the competitor's, and the ratio (competitor time over 
 | idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 0 | measure | 17.12 µs |
 | idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 64 | measure | 16.33 µs |
 | idea 0.6: sniff window | 64 KiB upload, `sniff_bytes` 512 | measure | 16.40 µs |
+| idea 0.8: refusal digest | `record`, form-net's own code | about 1 ns | 5 ns (2026-11-05) |
+| idea 0.8: refusal digest | `record`, the eighth named inspector code | about 1 ns | 6 ns (2026-11-05) |
+| idea 0.8: refusal digest | `record`, an unnamed inspector code | about 1 ns | 5 ns (2026-11-05) |
+| `TokenCheck` | login form, no inspector | measure | 257 ns (2026-11-05) |
+| `TokenCheck` | login form, the check (`verify` excluded) | within 5% of none | 268 ns (2026-11-05) |
 
 Two targets were estimates that the measurement does not quite meet:
 
@@ -162,6 +167,12 @@ The multipart parser's one allocation is its buffer (`multipart_buffer_len`), ma
 Some ratios fell with form-net's time unchanged, because the competitor's minimum fell on a quieter machine: the avatar against multer (form-net 2.54 to 2.51 µs, multer 5.28 to 4.16 µs), 1 MiB plain against form_urlencoded (97 to 97 µs, 930 to 774 µs).
 
 One number depends on the build. `pairs` on 1 MiB of escapes reads 332 µs in 0.6.0 and 452 µs here, with no urlencoded code changed: built with this crate's release profile (fat LTO, one codegen unit) the 0.7.0 code and the code before it both read 326 to 334 µs, so the move is code placement under the default 16 codegen units. It stays well past the bar (2.00x) and is on the polish list (`dev/ROADMAP.md`).
+
+---
+
+## What 0.8 changes
+
+`Limits::DEFAULT.sniff_bytes` is 512 (D-122), so the buffered and to-disk drivers hold back the first 512 bytes of each file for the inspector. Measured again on 2026-11-05 on a loaded machine, both families still pass: buffered 1.69x to 2.82x, to disk 2.17x. The streaming families drive the parser directly and are unchanged. The refusal digest's `record` is 5 ns, over the 1 ns estimate: one locked add costs about that here. The baseline in `benches/baseline/2026-10-30` stays the reference until the 0.9 performance pass.
 
 ---
 

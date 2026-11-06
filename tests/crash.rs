@@ -27,7 +27,13 @@ fn test_crash_child() {
         .unwrap()
         .memory_threshold(0)
         .mode(mode);
-    let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a\r\n\r\nspilled bytes";
+    // More than the sniff window, which holds a file's first bytes back
+    // until it is full.
+    let mut body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a\r\n\r\n".to_vec();
+    body.extend(std::iter::repeat_n(
+        b's',
+        2 * form_net::Limits::DEFAULT.sniff_bytes as usize + 1,
+    ));
     let mut s = form_net::UploadSession::new(
         b"multipart/form-data; boundary=X",
         &form_net::Limits::DEFAULT,
@@ -35,7 +41,7 @@ fn test_crash_child() {
         &store,
     )
     .unwrap();
-    s.push(body, &mut form_net::NoInspector).unwrap();
+    s.push(&body, &mut form_net::NoInspector).unwrap();
     println!("ready");
     std::thread::sleep(std::time::Duration::from_secs(120));
 }

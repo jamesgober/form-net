@@ -11,6 +11,27 @@
 
 ## [Unreleased]
 
+Alpha (0.8), the part that does not wait for web-net and customs-sec.
+
+### Added
+
+- `TokenCheck`: an inspector that verifies the anti-forgery token as soon
+  as its field ends, so a forged upload is refused before any file opens a
+  sink; it checks urlencoded forms too (D-120).
+- `RefusalDigest`: counts of every error code per route, for detection;
+  one atomic add per record, no allocation (D-123).
+- `tests/alpha_routes.rs`: the login and avatar routes as web-net will
+  write them, with csrf-sec's real tokens and a customs test double
+  (D-124).
+
+### Changed
+
+- `Limits::DEFAULT.sniff_bytes` is 512 (was 0), so an inspector's `sniff`
+  runs unless a route turns it off; a content check no longer fails open
+  under the defaults (D-122).
+- `form!` gives its hidden builder the struct's visibility, so a private
+  form at module level compiles (D-121).
+
 ---
 
 ## [0.7.0] - 2026-11-04

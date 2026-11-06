@@ -1286,7 +1286,7 @@ Every budget is checked **before** the bytes it governs are buffered, stored, or
 | `max_preamble_bytes` | 1 KiB | bytes before the first delimiter | while the preamble is scanned |
 | `max_epilogue_bytes` | 1 KiB | bytes after the close delimiter | per chunk, in constant time |
 | `max_padding_bytes` | 32 | transport padding after a delimiter | per byte |
-| `sniff_bytes` | 0 (off) | the sniff window per file part | at construction (buffer size) |
+| `sniff_bytes` | 512 | the sniff window per file part; 0 turns it off (D-122) | at construction (buffer size) |
 | `max_token_bytes` | 128 | the captured anti-forgery token (csrf-sec tokens are 59 characters, one-time tokens 102) | at capture |
 
 **Containing limits cap contained ones**, so a route sets only the limits it cares about: the effective value of a limit is never more than the limit that contains it. `max_file_bytes`, `max_text_bytes`, `max_preamble_bytes`, and `max_epilogue_bytes` are capped by `max_body_bytes`; `max_value_bytes` by `max_text_bytes`; `max_name_bytes` by `max_body_bytes`; `max_token_bytes` by `max_value_bytes`; `sniff_bytes` by `max_file_bytes`; `max_filename_bytes` by `max_part_header_bytes`. `Limits::DEFAULT.with_max_body_bytes(4096)` is a complete, consistent configuration for a small form. Every check and every size (buffers, `memory_bound`) uses the effective values.
@@ -1553,6 +1553,86 @@ impl<I: Inspector + ?Sized> Inspector for Box<I> {}   // D-088, alloc: a chain c
 ```
 
 `Refusal::status` is the HTTP status the inspector wants: `FormError::status_hint` returns it, and a status outside 400 to 599 is reported as 400, because a refusal is never a success. `Refusal::code` is the inspector's stable, machine-readable name for the reason (for example `customs.unexpected_field`), which `FormError::code` returns for a refusal; it must never contain input. `Refusal` ships at 0.3 with `FormError`; inspectors at 0.4.
+
+### `TokenCheck`
+
+`#74` · P1 · Tier 2 · 0.8 · core
+
+```rust,ignore
+pub struct TokenCheck<V> { /* name, verify, seen, verified */ }
+
+impl<V: FnMut(&str) -> Result<(), Refusal>> TokenCheck<V> {
+    pub const fn new(name: &'static str, verify: V) -> TokenCheck<V>;
+    pub const fn verified(&self) -> bool;
+}
+
+impl<V: FnMut(&str) -> Result<(), Refusal>> Inspector for TokenCheck<V> {}
+```
+
+Verifies the anti-forgery token the moment its field ends, before any later part starts, so a forged upload is refused before its first file opens a sink and costs no disk (D-120). `verify` gets the value of the text field named `name` once and does the comparison (csrf-sec's `Csrf::verify`, in constant time); its `Err` is the refusal reported.
+
+- `csrf.missing` (403): a file part starts before a token was verified, or the body ends without one.
+- `csrf.duplicate` (403): a second field with the token's name.
+- `csrf.not_text` (403): a token that is not UTF-8.
+- The token field stays in the result; leave it out of a typed form with `ignore`.
+- Works for both encodings, alone or as one half of a pair: `(customs, check)`.
+- With `TokenField::anywhere`, where files may come before the token, verify `captured_token` after the parse instead: the check always wants the token first.
+
+```rust
+use form_net::{Limits, Policy, Refusal, TokenCheck};
+
+# struct Csrf;
+# impl Csrf { fn verify(&self, _session: &str, token: &str) -> bool { token == "good" } }
+# let (csrf, session) = (Csrf, "session-id");
+let mut check = TokenCheck::new("csrf_token", |token| {
+    if csrf.verify(session, token) { Ok(()) } else { Err(Refusal::new(403, "csrf.rejected")) }
+});
+let form = form_net::parse_urlencoded_inspected(b"csrf_token=good&a=1", &Limits::DEFAULT, &Policy::DEFAULT, &mut check)?;
+assert!(check.verified());
+# assert_eq!(form.get("a"), Some("1"));
+# Ok::<(), form_net::FormError>(())
+```
+
+**Cost:** one name comparison per text field, and `verify` once (csrf-sec measures 110 ns): a login form parses in 268 ns with the check against 257 ns without, `verify` excluded (measured, `benches` `targets`). `tests/token_check.rs` drives real csrf-sec tokens through every split of an upload.
+
+### `RefusalDigest`
+
+`#75` · P2 · Tier 2 · 0.8 · core (targets with 32-bit atomic adds)
+
+```rust,ignore
+pub struct RefusalDigest<const N: usize = 0> { /* one counter per code */ }
+
+impl RefusalDigest<0> {
+    pub const fn new() -> RefusalDigest<0>;
+}
+impl<const N: usize> RefusalDigest<N> {
+    pub const fn with_codes(codes: [&'static str; N]) -> RefusalDigest<N>;
+    pub fn record(&self, error: &FormError);
+    pub fn count(&self, code: &str) -> u64;
+    pub fn unnamed(&self) -> u64;
+    pub fn total(&self) -> u64;
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, u64)> + '_;
+}
+```
+
+How many times each failure code was returned, for one route (PLAN 14, D-123): one counter per code form-net returns, one per inspector code named in `with_codes` (customs-sec's, `csrf.*`), and one for every other inspector refusal (`unnamed`). The route records every error it returns, whichever call returned it; a detection layer reads the counts and compares them over time, since a client probing a route shows up as climbing `syntax.*` and `policy.*` counts.
+
+- `record` takes `&self` and is safe from every thread at once (relaxed atomic adds); a `static` per route works.
+- Counters are 64 bits where the target has 64-bit atomics, 32 bits elsewhere; they wrap, so compare readings with `wrapping_sub`.
+- A code named twice, or named and also form-net's, sums its counters in `count`.
+- Not built on targets without atomic adds (`thumbv6m`).
+
+```rust
+use form_net::RefusalDigest;
+
+static LOGIN: RefusalDigest<1> = RefusalDigest::with_codes(["csrf.rejected"]);
+if let Err(e) = form_net::parse_urlencoded(b"a=%zz") {
+    LOGIN.record(&e);
+}
+assert_eq!(LOGIN.count("encoding.invalid_percent"), 1);
+```
+
+**Cost:** a match and one relaxed atomic add for form-net's codes, 5 ns; an inspector code is first compared with the named codes, 5 to 6 ns with eight named (measured, `benches` `targets`). Memory: 8 bytes per counter, 496 bytes for form-net's 61 codes plus 8 per named code.
 
 ### `Sink`, `DiscardSink`, `MemorySink`
 
@@ -2091,7 +2171,7 @@ let signup = Signup::from_body(content_type, body)?;
 
 **Behaviour**
 
-- Expands to the struct exactly as written (attributes, doc comments, and visibility passed through), a hidden builder with one slot per field, and `impl FromForm`. The struct may not be generic and must have named fields.
+- Expands to the struct exactly as written (attributes, doc comments, and visibility passed through), a hidden builder with one slot per field and the struct's own visibility (so a private form at module level compiles, D-121), and `impl FromForm`. The struct may not be generic and must have named fields.
 - The wire name of a field is its Rust name; `= "wire-name"` after the type overrides it (for names that are not Rust identifiers, such as `display-name` or `tags[]`). Bracket names are plain names: `tags[]` is matched byte for byte, never expanded into a structure.
 - The optional `ignore = [ ... ];` after the struct lists names that are accepted and dropped: the anti-forgery field and `_charset_` are the usual ones. An ignored name may appear any number of times. Every other name the struct does not declare is refused (`Extract { Unknown }`).
 - Field types implement [`FromField`](#fromfield-valueerror); the shipped types are listed under [Value rules](#value-rules).
@@ -2724,10 +2804,17 @@ form-net is a parser: it holds no state between requests, and the same version g
 | Need | form-net |
 |---|---|
 | the hidden field's name agreed without a convention document | `TokenField::new(csrf_sec::FIELD_NAME)` (`csrf_token`) |
-| verify the token before any upload reaches the disk | `TokenPlacement::BeforeFirstFile` (the default) + `UploadSession::captured_token` |
+| verify the token before any upload reaches the disk | `TokenCheck` beside customs in the same pass (refuses before the first file part starts); `TokenPlacement::BeforeFirstFile` and `UploadSession::captured_token` underneath |
 | a token of 59 or 102 characters fits | `max_token_bytes` default 128 |
 | an attacker cannot choose which of two tokens is read | `Policy { DuplicateToken }` |
 | constant-time comparison | done by csrf-sec; form-net only captures |
+
+### sentinel-sec (detection)
+
+| Need | form-net |
+|---|---|
+| refusal counts per route, without a log line per request | `RefusalDigest`, one per route, fed every error the route returns |
+| a stable name per reason | `FormError::code` (form-net's own and every inspector's) |
 
 ### Outbound clients and webhooks
 
@@ -2827,5 +2914,7 @@ Specified so the design leaves room for them; neither ships before 1.0.
 | 71 | `Store::memory_bound` | fn | 2 | P2 | 0.5 | fs |
 | 72 | `Limits::multipart_buffer_len`, `Limits::urlencoded_buffer_len` | const fns | 3 | P1 | 0.3 | core |
 | 73 | `Refusal`, `Refusal::new` | struct, fn | 3 | P0 | 0.3 | core |
+| 74 | `TokenCheck` | struct | 2 | P1 | 0.8 | core |
+| 75 | `RefusalDigest` | struct | 2 | P2 | 0.8 | core |
 
 Items 61 to 73 were added at the design lock; [`../dev/PLAN.md`](../dev/PLAN.md) records why (D-036 to D-073).

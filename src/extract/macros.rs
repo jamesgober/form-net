@@ -66,9 +66,11 @@ macro_rules! form {
         }
 
         const _: () = {
+            // The struct's own visibility: a builder more public than its
+            // `Output` would put a private type in a public interface.
             #[doc(hidden)]
             #[derive(Default)]
-            pub struct __FormNetBuilder {
+            $vis struct __FormNetBuilder {
                 $( $field: <$ty as $crate::FromField>::Slot, )*
             }
 
