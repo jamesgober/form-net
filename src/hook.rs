@@ -287,6 +287,132 @@ pub struct NoInspector;
 
 impl Inspector for NoInspector {}
 
+/// Verifies the anti-forgery token the moment its field ends, before any
+/// later part starts: a forged upload is refused before its first file
+/// opens a sink, so it costs no disk.
+///
+/// `verify` is called once, with the value of the text field named `name`
+/// (byte for byte, as [`TokenField`](crate::TokenField) matches it); it
+/// does the comparison (csrf-sec's `Csrf::verify`, constant time) and
+/// returns `Err` with the refusal to report. The check refuses, with
+/// status 403:
+///
+/// - `csrf.missing`: a file part starts before a token was verified, or the
+///   body ends without one;
+/// - `csrf.duplicate`: a second field with the token's name (two tokens
+///   would let an attacker choose which one is verified);
+/// - `csrf.not_text`: a token that is not UTF-8;
+/// - whatever `verify` returns.
+///
+/// It works for multipart and urlencoded bodies alike, and composes with
+/// other inspectors as a pair: `(customs, check)`. Browsers send fields in
+/// document order, so the form puts the hidden token input before its file
+/// inputs. With `TokenField::anywhere`, where files may come first, verify
+/// [`captured_token`](crate::MultipartParser::captured_token) (or the
+/// upload's) after the parse instead. The token field stays in the result; leave it out of a typed
+/// form with `ignore`.
+///
+/// Cost: one name comparison per text field, and `verify` once.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Limits, Policy, Refusal, TokenCheck};
+///
+/// # struct Csrf;
+/// # impl Csrf { fn verify(&self, _session: &str, token: &str) -> bool { token == "good" } }
+/// # let (csrf, session) = (Csrf, "session-id");
+/// let mut check = TokenCheck::new("csrf_token", |token| {
+///     if csrf.verify(session, token) { Ok(()) } else { Err(Refusal::new(403, "csrf.rejected")) }
+/// });
+/// let body = b"csrf_token=good&email=a%40b.example";
+/// let form = form_net::parse_urlencoded_inspected(body, &Limits::DEFAULT, &Policy::DEFAULT, &mut check)?;
+/// assert!(check.verified());
+/// assert_eq!(form.get("email"), Some("a@b.example"));
+///
+/// let mut check = TokenCheck::new("csrf_token", |_| Err(Refusal::new(403, "csrf.rejected")));
+/// let err = form_net::parse_urlencoded_inspected(b"csrf_token=bad", &Limits::DEFAULT, &Policy::DEFAULT, &mut check)
+///     .unwrap_err();
+/// assert_eq!((err.status_hint(), err.code()), (403, "csrf.rejected"));
+/// # Ok::<(), form_net::FormError>(())
+/// ```
+pub struct TokenCheck<V> {
+    name: &'static str,
+    verify: V,
+    seen: bool,
+    verified: bool,
+}
+
+impl<V: FnMut(&str) -> Result<(), Refusal>> TokenCheck<V> {
+    /// A check of the field `name` with `verify`.
+    #[must_use]
+    pub const fn new(name: &'static str, verify: V) -> TokenCheck<V> {
+        TokenCheck {
+            name,
+            verify,
+            seen: false,
+            verified: false,
+        }
+    }
+
+    /// Whether the token was seen and `verify` accepted it.
+    #[must_use]
+    pub const fn verified(&self) -> bool {
+        self.verified
+    }
+}
+
+impl<V> core::fmt::Debug for TokenCheck<V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TokenCheck")
+            .field("name", &self.name)
+            .field("seen", &self.seen)
+            .field("verified", &self.verified)
+            .finish_non_exhaustive()
+    }
+}
+
+const TOKEN_MISSING: Refusal = Refusal::new(403, "csrf.missing");
+const TOKEN_DUPLICATE: Refusal = Refusal::new(403, "csrf.duplicate");
+const TOKEN_NOT_TEXT: Refusal = Refusal::new(403, "csrf.not_text");
+
+impl<V: FnMut(&str) -> Result<(), Refusal>> Inspector for TokenCheck<V> {
+    fn part_start(&mut self, head: &PartHead<'_>) -> Verdict {
+        if head.is_file() && !self.verified {
+            return Verdict::Refuse(TOKEN_MISSING);
+        }
+        Verdict::Continue
+    }
+
+    fn field(&mut self, name: &str, value: &[u8]) -> Verdict {
+        if name != self.name {
+            return Verdict::Continue;
+        }
+        if self.seen {
+            return Verdict::Refuse(TOKEN_DUPLICATE);
+        }
+        self.seen = true;
+        let Ok(token) = core::str::from_utf8(value) else {
+            return Verdict::Refuse(TOKEN_NOT_TEXT);
+        };
+        match (self.verify)(token) {
+            Ok(()) => {
+                self.verified = true;
+                Verdict::Continue
+            }
+            Err(refusal) => Verdict::Refuse(refusal),
+        }
+    }
+
+    fn end(&mut self) -> Verdict {
+        if self.verified {
+            Verdict::Continue
+        } else {
+            Verdict::Refuse(TOKEN_MISSING)
+        }
+    }
+}
+
 /// Where file parts go: one part at a time, `open`, any number of `write`,
 /// then `close` or `abort`.
 ///

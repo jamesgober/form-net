@@ -13,6 +13,32 @@
 
 ---
 
+## [0.8.0] - 2026-11-07
+
+Alpha: the parts of the first site's routes that do not wait for web-net
+and customs-sec. The test deployment moves to 0.9.x (D-125).
+
+### Added
+
+- `TokenCheck`: an inspector that verifies the anti-forgery token as soon
+  as its field ends, so a forged upload is refused before any file opens a
+  sink; it checks urlencoded forms too (D-120).
+- `RefusalDigest`: counts of every error code per route, for detection;
+  one atomic add per record, no allocation (D-123).
+- `tests/alpha_routes.rs`: the login and avatar routes as web-net will
+  write them, with csrf-sec's real tokens and a customs test double
+  (D-124).
+
+### Changed
+
+- `Limits::DEFAULT.sniff_bytes` is 512 (was 0), so an inspector's `sniff`
+  runs unless a route turns it off; a content check no longer fails open
+  under the defaults (D-122).
+- `form!` gives its hidden builder the struct's visibility, so a private
+  form at module level compiles (D-121).
+
+---
+
 ## [0.7.0] - 2026-11-04
 
 Hardening: a capture corpus, a mutation generator, a multer differential, an
@@ -307,7 +333,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/jamesgober/form-net/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/form-net/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/form-net/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/form-net/compare/v0.4.0...v0.5.0

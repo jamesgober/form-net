@@ -43,6 +43,15 @@ pub enum StoreError {
 }
 
 impl StoreError {
+    #[cfg(target_has_atomic = "32")]
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::QuotaExceeded => 0,
+            Self::NotADirectory => 1,
+            Self::DestinationExists => 2,
+        }
+    }
+
     pub(crate) const fn code(self) -> &'static str {
         match self {
             Self::QuotaExceeded => "store.quota_exceeded",

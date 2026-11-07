@@ -238,5 +238,91 @@ fn main() {
             fmt(t),
         );
     }
+
+    // Idea 0.8: the refusal digest. One record, three ways in.
+    let digest = form_net::RefusalDigest::with_codes([
+        "customs.a",
+        "customs.b",
+        "customs.c",
+        "customs.d",
+        "customs.e",
+        "customs.f",
+        "customs.g",
+        "customs.not_an_image",
+    ]);
+    let refused = |code: &'static str| -> form_net::FormError {
+        let mut deny = Deny(code);
+        form_net::parse_urlencoded_inspected(b"a=1", &Limits::DEFAULT, &Policy::DEFAULT, &mut deny)
+            .unwrap_err()
+    };
+    let cases = [
+        (
+            "form-net's own code",
+            form_net::parse_urlencoded(b"a=%zz").unwrap_err(),
+        ),
+        (
+            "the eighth named inspector code",
+            refused("customs.not_an_image"),
+        ),
+        ("an unnamed inspector code", refused("customs.unlisted")),
+    ];
+    for (what, err) in &cases {
+        let t = best(|| {
+            digest.record(black_box(err));
+            1
+        });
+        row(
+            "idea 0.8: refusal digest",
+            &format!("`record`, {what}"),
+            "about 1 ns",
+            fmt(t),
+        );
+    }
+
+    // TokenCheck on a login form, against no inspector.
+    let login = b"email=a%40b.example&password=hunter2&remember=on&csrf_token=0123456789012345678901234567890123456789012345678901234567";
+    let plain = best(|| {
+        form_net::parse_urlencoded_inspected(
+            login,
+            &Limits::DEFAULT,
+            &Policy::DEFAULT,
+            &mut NoInspector,
+        )
+        .unwrap()
+        .len()
+    });
+    let checked = best(|| {
+        let mut check = form_net::TokenCheck::new("csrf_token", |t: &str| {
+            if !black_box(t).is_empty() {
+                Ok(())
+            } else {
+                Err(form_net::Refusal::new(403, "csrf.rejected"))
+            }
+        });
+        form_net::parse_urlencoded_inspected(login, &Limits::DEFAULT, &Policy::DEFAULT, &mut check)
+            .unwrap()
+            .len()
+    });
+    row(
+        "`TokenCheck`",
+        "login form, no inspector",
+        "measure",
+        fmt(plain),
+    );
+    row(
+        "`TokenCheck`",
+        "login form, the check (verify excluded)",
+        "within 5% of none",
+        fmt(checked),
+    );
     let _ = (Boundary::new(b"X"), Limits::DEFAULT);
+}
+
+/// Refuses every field with one code.
+struct Deny(&'static str);
+
+impl Inspector for Deny {
+    fn field(&mut self, _: &str, _: &[u8]) -> Verdict {
+        Verdict::Refuse(form_net::Refusal::new(422, self.0))
+    }
 }

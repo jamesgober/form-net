@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "form-net"
-version = "0.7.0"
+version = "0.8.0"
 
 # Minimum Supported Rust Version (MSRV)
 rust-version = "1.85"
@@ -92,6 +92,8 @@ unicode-lang = { version = "1.0.1", default-features = false, features = ["alloc
 # #################################
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }
+# Real anti-forgery tokens for the TokenCheck tests (first-party).
+csrf-sec = "0.9.1"
 
 # The model checker for SpillQuota, only under `--cfg loom` (CI job `loom`).
 [target.'cfg(loom)'.dev-dependencies]

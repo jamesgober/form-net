@@ -88,7 +88,7 @@
 //! [repository](https://github.com/jamesgober/form-net), with
 //! `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, and
 //! `docs/PERFORMANCE.md` (measurements against the other Rust form parsers).
-//! This release (0.7) is feature complete, optimised, and hardened.
+//! This release (0.8) is feature complete, optimised, hardened, and in alpha.
 
 #![no_std]
 #![doc(html_root_url = "https://docs.rs/form-net")]
@@ -117,6 +117,8 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+#[cfg(target_has_atomic = "32")]
+mod digest;
 mod error;
 #[cfg(feature = "alloc")]
 mod extract;
@@ -137,6 +139,9 @@ mod wipe;
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
 pub use alloc::vec::Vec as __Vec;
+#[cfg(target_has_atomic = "32")]
+#[cfg_attr(docsrs, doc(cfg(target_has_atomic = "32")))]
+pub use digest::RefusalDigest;
 pub use error::{
     EncodingError, ExtractError, FormError, Limit, Location, PolicyRefusal, SyntaxError,
 };
@@ -151,7 +156,7 @@ pub use extract::{
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use hook::MemorySink;
-pub use hook::{DiscardSink, Inspector, NoInspector, Refusal, Sink, Verdict};
+pub use hook::{DiscardSink, Inspector, NoInspector, Refusal, Sink, TokenCheck, Verdict};
 pub use kind::FormKind;
 pub use limits::{
     EmptyFilePolicy, ExtendedFilenamePolicy, HeaderPolicy, Limits, PercentPolicy, Policy,
@@ -221,6 +226,7 @@ mod tests {
         send_sync::<super::Policy>();
         send_sync::<super::Boundary>();
         send_sync::<super::FormError>();
+        send_sync::<super::RefusalDigest<2>>();
         send_sync::<super::MultipartParser<&mut [u8]>>();
         #[cfg(feature = "alloc")]
         {
