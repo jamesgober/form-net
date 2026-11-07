@@ -99,8 +99,11 @@ Exit: every threat has a passing attack test; the soak shows no growth; the diff
 
 Exit: the first site's form routes run on form-net in a test deployment; findings fixed test-first.
 
-- [ ] web-net uses `FormKind`, `FromForm::from_body*`, `UploadSession`, and `form!` end to end on the login and upload routes; customs-sec runs as an `Inspector`; csrf-sec verifies the captured token. Blocked: web-net and customs-sec are not built. Done ahead of them: both routes written as web-net will write them, with a customs test double and csrf-sec 0.9.1's real tokens (`tests/alpha_routes.rs`, D-124), and `TokenCheck` for the token (D-120, `tests/token_check.rs`). Left: the same routes in web-net with the real customs-sec, in a test deployment.
-- [ ] API changes from that use are made now (the last chance before beta), each with a decision-log entry. Made so far: `form!` builder visibility (D-121), the sniff window on by default (D-122), `TokenCheck` (D-120). Open until web-net's own use.
+Released 2026-11-07 without its exit: web-net and customs-sec are not built yet, so the test deployment moved to v0.9.x, whose exit already needs two weeks of their use (D-125). Everything that does not need them is done.
+
+- [x] The login and upload routes written as web-net will write them, with a customs test double and csrf-sec 0.9.1's real tokens (`tests/alpha_routes.rs`, D-124); `TokenCheck` verifies the token (D-120, `tests/token_check.rs`).
+- [x] API changes that use found, each with a decision-log entry: `form!` builder visibility (D-121), the sniff window on by default (D-122), `TokenCheck` (D-120).
+- Moved to v0.9.x (D-125): web-net runs the same routes end to end with the real customs-sec as the `Inspector` and csrf-sec on the captured token, in a test deployment; API changes from that use.
 - [x] Defence idea: refusal digest (PLAN 14): `RefusalDigest`, 5 ns per record (D-123).
 
 ## v0.9.0 - Polish (before any release candidate)
@@ -123,6 +126,7 @@ Exit: every item accepted, deferred, or missed earlier in the series has been tr
 
 Exit: one release candidate with no change for two weeks of use by web-net and customs-sec.
 
+- [ ] From 0.8 (D-125): web-net runs the login and upload routes on form-net end to end, customs-sec as the `Inspector`, csrf-sec on the captured token, in a test deployment; `tests/alpha_routes.rs` is the contract. Findings fixed test-first; an API change it needs is made before the freeze.
 - [ ] API freeze candidates `0.9.x`; fixes only.
 - [ ] Adversarial review (DIRECTIVES definition of done, item 10) with every finding fixed test-first.
 - [ ] `docs/STABILITY-1.0.md` drafted.

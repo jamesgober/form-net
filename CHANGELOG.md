@@ -11,7 +11,12 @@
 
 ## [Unreleased]
 
-Alpha (0.8), the part that does not wait for web-net and customs-sec.
+---
+
+## [0.8.0] - 2026-11-07
+
+Alpha: the parts of the first site's routes that do not wait for web-net
+and customs-sec. The test deployment moves to 0.9.x (D-125).
 
 ### Added
 
@@ -328,7 +333,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/jamesgober/form-net/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/form-net/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/form-net/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/form-net/compare/v0.4.0...v0.5.0
