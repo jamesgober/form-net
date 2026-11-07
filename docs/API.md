@@ -1,7 +1,7 @@
 # form-net - API Reference
 
 > Reference for every public item in `form-net`: signature, behaviour, the errors each item can return, cost, and examples.
-> **Current release: `0.5.0` (feature complete).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.8.0` (alpha).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -120,7 +120,7 @@ Every item has an id (`#7`), a **grade**, a **tier**, the **version** that ships
 | 2 | configuration: explicit `Limits` and `Policy`, inspectors, stores |
 | 3 | the full allocation-free surface, for other libraries and drivers |
 
-Costs marked **[est.]** are the design's targets; `docs/PERFORMANCE.md` holds the measured numbers (since `0.6.0`).
+Every cost below is measured (0.6.0 to 0.9.0) unless marked **[est.]**; `docs/PERFORMANCE.md` holds the method, the machine, and the raw numbers. The figures are Linux unless a line says otherwise.
 
 ### Feature flags
 
@@ -262,7 +262,7 @@ Reads a request's `Content-Type` value and says which form encoding it is. It is
 | `Syntax { InvalidBoundary }` | empty, longer than 70 bytes, a byte outside `bchars`, or a trailing space |
 | `Encoding { UnsupportedCharset }` | a urlencoded `charset` other than UTF-8 or US-ASCII |
 
-**Cost:** under 100 ns for a browser value (`multipart/form-data; boundary=----WebKitFormBoundary` plus 16 characters), no allocation [est.].
+**Cost:** 114 ns for a browser value (`multipart/form-data; boundary=----WebKitFormBoundary` plus 16 characters), no allocation; the time is parse-net's strict media-type grammar (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 use form_net::{FormKind, FormError};
@@ -306,7 +306,7 @@ Parses a whole `application/x-www-form-urlencoded` body with `Limits::DEFAULT` a
 
 **Errors:** `Limit { Body | Fields | NameLength | ValueLength | TextTotal }`; `Encoding { InvalidPercent | InvalidUtf8 }`.
 
-**Cost:** two allocations however many fields; under 400 ns for a 10-field, 300-byte body [est.]; at least 20% faster than `form_urlencoded::parse` collected into a `Vec<(String, String)>`.
+**Cost:** two allocations however many fields; 379 to 419 ns for a 10-field, 179-byte body; 1.34x to 8.00x faster than `form_urlencoded::parse` collected into a `Vec<(String, String)>`, and level with it on a 25-byte two-field query (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 let form = form_net::parse_urlencoded(b"email=a%40b.example&remember=on")?;
@@ -410,7 +410,7 @@ The owned result of a urlencoded parse.
 
 **Errors:** `get_one` returns `Extract { reason: Duplicate, field: None }` for a repeated name.
 
-**Cost:** `get` under 5 ns per field compared [est.]; no method allocates.
+**Cost:** `get` about 3.3 ns per field compared (a length check and a byte comparison); no method allocates (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 let form = form_net::parse_urlencoded(b"role=user&role=admin&tag=red&tag=blue")?;
@@ -565,7 +565,7 @@ impl<'a> RawPair<'a> {
     pub fn value_needs_decoding(&self) -> bool;
     pub fn name_str(&self) -> Option<&'a str>;
     pub fn value_str(&self) -> Option<&'a str>;
-    pub fn decode_name<'b>(&self, out: &'b mut [u8], policy: PercentPolicy) -> Result<&'b str, FormError>;
+    pub fn decode_name<'b>(&self, out: &'b mut [u8], policy: PercentPolicy) -> Result<&'b str, FormError> where 'a: 'b;
     pub fn decode_value<'b>(&self, out: &'b mut [u8], policy: PercentPolicy) -> Result<&'b str, FormError>;
     pub fn offset(&self) -> u64;
 }
@@ -579,13 +579,13 @@ The scanner every urlencoded API is built on, with no allocation and no copy.
 - Budgets are checked per sequence, before the sequence is handed out: body size (`max_body_bytes`, counting every byte including empty sequences), field count, raw name length, raw value length, and the running total of raw value lengths (`max_text_bytes`).
 - `has_equals` tells `a` from `a=` (equal in every decoded view).
 - `name_str` and `value_str` are `Some` only when no decoding is needed and the raw bytes are valid UTF-8: the zero-copy fast path.
-- `decode_name` and `decode_value` decode into `out` (see `decode_into`); a buffer as long as the raw component always suffices.
+- `decode_name` and `decode_value` decode into `out` (see `decode_into`); a buffer as long as the raw component always suffices, and is required either way. A component with no `%` or `+` is returned borrowed from the body, checked as UTF-8, with no copy (D-126).
 - `offset` is the byte offset of the sequence in the input; errors carry it too.
 - `Debug` prints offsets and lengths only.
 
 **Errors:** iteration: `Limit { Body | Fields | NameLength | ValueLength | TextTotal }`. `decode_*`: `Encoding { InvalidPercent | InvalidUtf8 }`, `BufferTooSmall { needed }`.
 
-**Cost:** zero allocation (FR-9); scan at least 1.5 GB/s on input without escapes, decode at least 700 MB/s on fully escaped input [est.].
+**Cost:** zero allocation (FR-9); the scan runs at 12.6 GB/s on input without escapes, `decode_into` at 3.9 GB/s on fully escaped input; `decode_name` and `decode_value` return a component with no `%` or `+` borrowed from the body, with no copy (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 use form_net::{Limits, PercentPolicy};
@@ -734,7 +734,7 @@ pub fn parse_multipart<'a>(content_type: &[u8], body: &'a [u8]) -> Result<Multip
 
 Detects the boundary, parses the whole body with `Limits::DEFAULT` and `Policy::DEFAULT`, and returns the parts. Part data borrows the body (zero copy); a part's bytes are the exact slice between its blank line and the CRLF before the next delimiter. Names borrow too, except where an HTML escape (`%22`, `%0D`, `%0A`) had to be decoded, which costs one small owned copy for that name.
 
-Text fields are checked as text at parse time (a US-ASCII label is read as UTF-8, of which it is a subset): a text field that is not valid UTF-8, or whose charset (its own, else the `_charset_` field before it, else UTF-8) is not UTF-8 or US-ASCII, refuses the body. That is why `Multipart::field` can return a plain `Option<&str>` without hiding an error. Callers who must accept other charsets use the Tier 3 parser, which hands out bytes.
+Text fields are checked as text at parse time (a US-ASCII label is read as UTF-8, of which it is a subset): a text field that is not valid UTF-8, or whose charset (its own, else the `_charset_` field before it, else UTF-8) is not UTF-8 or US-ASCII, refuses the body. A field is checked when its whole value is read: before `Inspector::field`, and not when an inspector skipped it at `part_start` or `data` (its bytes are discarded unread); a `_charset_` field declares the charset of what follows whether or not it was skipped. `UploadSession` checks by the same rule (D-128). That is why `Multipart::field` can return a plain `Option<&str>` without hiding an error. Callers who must accept other charsets use the Tier 3 parser, which hands out bytes.
 
 **Errors:** every multipart error in [Every error](#every-error-and-what-to-do); `UnsupportedMediaType` when the content type is not `multipart/form-data`.
 
@@ -920,7 +920,7 @@ A validated boundary with its delimiter (`CRLF "--" boundary`, 5 to 74 bytes) an
 
 **Errors:** `Syntax { InvalidBoundary | MissingBoundary | DuplicateBoundary | InvalidContentType }`; `UnsupportedMediaType` from `parse`.
 
-**Cost:** under 100 ns including the table; no allocation; 149 bytes, `Copy` [est.].
+**Cost:** 74 to 82 ns for a 38-byte browser boundary, the table included; no allocation; 149 bytes, `Copy` (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 use form_net::Boundary;
@@ -975,11 +975,11 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
 - `reset` returns the parser to its initial state for a new body with `boundary`, wipes the buffer's used part, and clears the poisoned state. It never allocates, so parsers can be pooled.
 - `captured_token` is the token field's value once its part has ended (see [`TokenField`](#tokenfield-tokenplacement)). `declared_charset` is the value of the last complete `_charset_` field. `limits` and `policy` are the configuration the parser was built with.
 - The parser itself enforces every rule that depends only on the bytes: all budgets, the token placement and duplicate rules, and the empty-file deferral of `EmptyFilePolicy::Skip` (a file part with an empty file name counts against `max_files`, and is checked against the token placement, only when its first data byte arrives).
-- The delimiter search is a streaming Knuth-Morris-Pratt automaton with an eight-byte SWAR skip to the next CR. Each input byte is examined a bounded number of times however the input is split; the worst case (a body of CR bytes or repeated near-miss delimiters) is linear with a constant about 4 to 8 times the typical case [est.].
+- The delimiter search skips 32 bytes at a time in safe Rust to the next `-` after a CR or LF, and compares the delimiter there word by word; a miss resumes at the byte that differed (D-102, D-113, D-117). Matches that span chunks carry the streaming automaton's state, so events are identical for every split. Each input byte is examined a bounded number of times however the input is split; the hostile shapes cost 0.27x (all CR) to 2.04x (near misses in the middle) of random file data per byte (measured, `docs/PERFORMANCE.md`).
 
 **Errors:** every multipart variant in [Every error](#every-error-and-what-to-do); `InvalidLimits` and `BufferTooSmall { needed }` from the constructors; `Poisoned` after any error until `reset`.
 
-**Cost:** no allocation after construction (FR-43; `with_buffer` never allocates at all); at least 3 GB/s on large file parts in 64 KiB chunks, under 1 µs for a 1 KiB body of three text fields [est.]; the struct is 384 bytes plus its buffer on 64-bit targets, 149 of them the boundary and its matcher table (NFR-18, measured). `Send` when `B: Send`.
+**Cost:** no allocation after construction (FR-43; `with_buffer` never allocates at all); 13.7 GB/s on a 100 MiB file part of random bytes in 64 KiB chunks, 669 ns for a 360-byte body of three text fields; the struct is 384 bytes plus its buffer on 64-bit targets, 149 of them the boundary and its matcher table (NFR-18, measured). `Send` when `B: Send`.
 
 ```rust
 use form_net::{Event, FormKind, MultipartParser, Policy, Limits};
@@ -1195,7 +1195,7 @@ The client's file name, with views for each way a caller might want it. **form-n
 
 **Errors:** `Encoding { InvalidUtf8 }`; `BufferTooSmall { needed }` from `html_unescape_into`.
 
-**Cost:** views are free; `sanitized` and `nfc` allocate one `String` (sanitize about 100 ns for a short name [est.]).
+**Cost:** views are free; `sanitized` and `nfc` allocate one `String` (`sanitized` 121 ns for a 24-byte name on Linux, 172 ns on Windows) (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 # let body = b"--X\r\nContent-Disposition: form-data; name=\"document\"; filename=\"C:\\Users\\me\\Q3 report: final?.pdf\"\r\n\r\n%PDF\r\n--X--\r\n";
@@ -1293,7 +1293,7 @@ Every budget is checked **before** the bytes it governs are buffered, stored, or
 
 `validate` refuses only what no body could satisfy, so a misconfiguration is found at startup, not under attack (FR-39): `max_part_header_bytes` below 64 (the shortest useful `Content-Disposition` line must fit), and buffer sizes that do not fit in `usize` on the target. With a token field set, the policy is checked too: an effective `max_token_bytes` of 0 is refused. Every parser constructor and every `*_with` function calls it.
 
-`memory_bound` is the worst-case number of bytes one parse with these limits can hold in memory (FR-40), for admission control (D-093): parser state (256); the parser buffer and the driver's copy of the current part head (each `multipart_buffer_len` under the most demanding policy); `sniff_bytes`; the field being received (`max_value_bytes`); the text kept and its names (`max_text_bytes` plus `max_fields × max_name_bytes`, the names capped by `max_body_bytes`); 96 bytes of index per field and 320 per part; owned copies of part names, file names, and content types (`max_parts × max_part_header_bytes`, capped by `max_body_bytes`); the files kept in memory, `max_files × min(file_in_memory_bytes, max_file_bytes)`, capped by twice `max_body_bytes` (a buffer that grew by doubling can hold twice its bytes); and half the largest growing buffer (a buffer that doubles holds its old half while it moves). `file_in_memory_bytes` is the most bytes of one file a store keeps in memory: its `memory_threshold`, or `u64::MAX` for a memory-only store (`Store::memory_bound` passes the right value). The caller's read buffer is not included (the blocking readers add 64 KiB). With the defaults and `Store::temp()` the bound is about 6.5 MiB per request against 10 MiB of input; a login route with `max_body_bytes = 4 KiB`, 8 fields and parts, no files, and a 1 KiB header budget is under 32 KiB. `tests/memory_bound.rs` measures hostile bodies against it with a peak-tracking allocator.
+`memory_bound` is the worst-case number of bytes one parse with these limits can hold in memory (FR-40), for admission control (D-093): per-request state (1 KiB: an `UploadSession`, which holds the parser, the driver, and the upload, is 952 bytes on 64-bit targets; asserted by a test); the parser buffer and the driver's copy of the current part head (each `multipart_buffer_len` under the most demanding policy); `sniff_bytes`; the field being received (`max_value_bytes`); the text kept and its names (`max_text_bytes` plus `max_fields × max_name_bytes`, the names capped by `max_body_bytes`); 96 bytes of index per field and 320 per part; owned copies of part names, file names, and content types (`max_parts × max_part_header_bytes`, capped by `max_body_bytes`); the files kept in memory, `max_files × min(file_in_memory_bytes, max_file_bytes)`, capped by twice `max_body_bytes` (a buffer that grew by doubling can hold twice its bytes); and half the largest growing buffer (a buffer that doubles holds its old half while it moves). `file_in_memory_bytes` is the most bytes of one file a store keeps in memory: its `memory_threshold`, or `u64::MAX` for a memory-only store (`Store::memory_bound` passes the right value). The caller's read buffer is not included (the blocking readers add 64 KiB). With the defaults and `Store::temp()` the bound is about 6.5 MiB per request against 10 MiB of input; a login route with `max_body_bytes = 4 KiB`, 8 fields and parts, no files, and a 1 KiB header budget is under 32 KiB. `tests/memory_bound.rs` measures hostile bodies against it with a peak-tracking allocator.
 
 **Errors:** `validate`: `InvalidLimits { limit }`, naming the first field of the first inconsistent pair.
 
@@ -1486,7 +1486,7 @@ part_start ─▶ sniff (file parts, when sniff_bytes > 0) ─▶ data* ─▶ f
 
 A `Verdict::Refuse` from any method stops the parse: every sink is aborted, every finished file is dropped (deleting stored files), and `FormError::Refused { refusal, at }` is returned. A `Verdict::Skip` from `part_start`, `sniff`, or `data` turns the rest of the part into counted, discarded bytes: no further `data` or `field` for it, its sink is aborted, and it is left out of the result; `part_end` still comes, with `skipped = true`. `Skip` from `field`, `part_end`, or `end` is treated as `Continue` (nothing is left to skip), except that a skipped `field` leaves that field out of the result.
 
-**Cost:** one monomorphized call per event, nothing for `NoInspector` [est.]; the sniff window is one copy of up to `sniff_bytes` per file (none for buffered bodies).
+**Cost:** one monomorphized call per event, inlined: an inspector that counts every event costs nothing measurable over `NoInspector` on 100 text parts (measured; `docs/PERFORMANCE.md`); the sniff window is one copy of up to `sniff_bytes` per file (none for buffered bodies).
 
 How customs-sec's body checks map onto the hooks:
 
@@ -1574,6 +1574,7 @@ Verifies the anti-forgery token the moment its field ends, before any later part
 - `csrf.missing` (403): a file part starts before a token was verified, or the body ends without one.
 - `csrf.duplicate` (403): a second field with the token's name.
 - `csrf.not_text` (403): a token that is not UTF-8.
+- `csrf.token_skipped` (500): another inspector in the pair skipped the token's part, so its value was never read; a configuration error (D-129).
 - The token field stays in the result; leave it out of a typed form with `ignore`.
 - Works for both encodings, alone or as one half of a pair: `(customs, check)`.
 - With `TokenField::anywhere`, where files may come before the token, verify `captured_token` after the parse instead: the check always wants the token first.
@@ -1773,7 +1774,7 @@ Where uploads are kept. A `Store` is `Send + Sync`, created once per process or 
 
 **Errors:** `temp`: `Io { kind }` when the directory cannot be created, `Random` when the OS random source fails (fail closed: no predictable fallback name). `in_dir`: `Store { NotADirectory }`, `Io { kind }`.
 
-**Cost:** `temp` one random read and one `mkdir` [est. 10 to 50 µs], once per process.
+**Cost:** `temp` one random read, one `mkdir`, and its checks: 133 µs on Linux, 285 µs on Windows, once per process; `in_dir` on an existing directory 0.5 µs on Linux, 26 µs on Windows (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 use form_net::{SpillMode, SpillQuota, Store};
@@ -1891,7 +1892,7 @@ One received file, in memory or in a temporary file.
 
 **Errors:** `Io { kind }`; `Store { DestinationExists }` from `persist`; `Limit { FileSize }` from `read_to_vec`.
 
-**Cost:** `persist` in named mode on one file system: one link and one unlink [est. under 50 µs]; otherwise a copy at disk speed.
+**Cost:** `persist` in named mode on one file system: one link and one unlink; a whole upload, persist, and delete takes 32 µs on Linux and 787 µs on Windows, where file creation is slow; otherwise a copy at disk speed (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 use std::io::Read;
@@ -2035,7 +2036,7 @@ A disk budget shared by every request that uses the store, so many uploads at on
 - `SpillQuota` is the in-process budget: a compare-and-swap loop on one atomic counter, lock-free, tested with `loom`. `set_limit` changes the limit live; reservations already made stay, new ones see the new limit. One quota per tenant gives each tenant its own share of the disk.
 - The trait is the seam for deployments where one budget must cover several worker processes on a host (a shared-memory or file-based counter) or a fleet (a lease from a coordinator, handed out locally in large grants so `reserve` stays a local operation). form-net needs nothing from the implementation but the two methods.
 
-**Cost:** `SpillQuota::reserve` one uncontended compare-and-swap per write call, about 5 to 20 ns [est.].
+**Cost:** `SpillQuota::reserve` one uncontended compare-and-swap per write call: 9 to 10 ns for a reserve and its release (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 use form_net::{SpillQuota, Store};
@@ -2264,7 +2265,7 @@ Every method feeds each field to a fresh `Builder` in input order and then calls
 
 **Errors:** the parser's errors; `Extract { reason, field }` (see [`ExtractError`](#reason-enums)).
 
-**Cost:** parse cost plus 10 to 30 ns per field for the name match and value conversion [est.]; at least 20% faster than `serde_urlencoded::from_bytes` into the same struct.
+**Cost:** parse cost plus 4 ns per field on Linux (17 ns on Windows) for the name match and value conversion; 1.75x faster than `serde_urlencoded::from_bytes` into the same struct (measured; `docs/PERFORMANCE.md`).
 
 ### `FormBuilder`
 
@@ -2473,7 +2474,7 @@ Writes a `multipart/form-data` body as browsers do (FR-64 to FR-66).
 
 **Errors:** `Syntax { BoundaryInContent | ControlInHeader | EmptyName | AmbiguousQuote | InvalidContentType }`; `Encoding { UnsupportedCharset }`; `Io { kind }` from the writer; `Random` from `new`; `Poisoned`.
 
-**Cost:** writes go straight to `out`; head encoding under 100 ns per part [est.]; the boundary scan about 0.1 to 0.3 ns per byte when on [est.].
+**Cost:** writes go straight to `out`; head encoding 72 to 85 ns per file part; the boundary scan under 0.1 ns per byte when on (measured; `docs/PERFORMANCE.md`).
 
 ```rust
 let mut body = Vec::new();
@@ -2500,7 +2501,7 @@ impl Boundary {
 
 `form-net-` followed by 32 lowercase hex characters from 16 bytes of the OS random source: 41 bytes, all `bchars`.
 
-**Errors:** `Random` when the OS random source fails (fail closed). **Cost:** one random read, a system call [est. under 1 µs].
+**Errors:** `Random` when the OS random source fails (fail closed). **Cost:** one random read, a system call: 173 to 248 ns (measured; `docs/PERFORMANCE.md`).
 
 ### `encode_part_head`
 
@@ -2746,10 +2747,10 @@ Codes never change meaning after 1.0; new variants add new codes.
 
 Checked at compile time by static assertions in the test suite (NFR-11).
 
-| Value | Size (64-bit) [est.] |
+| Value | Size (64-bit; asserted by `test_the_api_size_table_holds`) |
 |---|---|
 | `Boundary` | 149 bytes |
-| `MultipartParser<B>` | 384 bytes plus its buffer (measured; asserted by a test, NFR-18) |
+| `MultipartParser<B>` | at most 384 bytes plus its buffer (NFR-18) |
 | `FormError` | at most 48 bytes |
 | `Limits` | 72 bytes |
 | `RawPair` | 48 bytes |

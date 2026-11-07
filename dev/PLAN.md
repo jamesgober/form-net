@@ -4,7 +4,7 @@
 >
 > **Read order:** [`../REPS.md`](../REPS.md) &rarr; [`DIRECTIVES.md`](./DIRECTIVES.md) &rarr; **this file** &rarr; [`ROADMAP.md`](./ROADMAP.md) &rarr; [`../docs/API.md`](../docs/API.md).
 >
-> **Status:** design lock, `0.2.0`. The API is fixed for `0.3.0` to `1.0.0`; a change needs an entry in the [decision log](#16-decision-log).
+> **Status:** `0.8.0` released (alpha); `0.9.0` is the polish pass. The API was locked at `0.2.0` for `0.3.0` to `1.0.0`; every change since has an entry in the [decision log](#16-decision-log).
 
 ---
 
@@ -341,7 +341,7 @@ loop over input:
 - **Linear, never rescanning.** Each byte is examined a bounded number of times whatever the split; `k` carries across chunks, so a split delimiter costs nothing extra (the CVE-2023-46136 failure, re-searching a growing buffer, cannot happen).
 - **No held-back buffer.** When a partial match of `k` bytes ends a chunk, nothing is copied. If the match later drops from `k` to `j`, the bytes that turn out to be data are exactly `delimiter[..k - j]`, so the parser emits them as a `Data` event borrowed from the boundary's own bytes.
 - **Start of body.** The parser starts in state `k = 2`, as if CRLF had been seen, so a body that begins with `--boundary` needs no special case; if that fails it scans the preamble for the full delimiter.
-- **Worst case.** A body of CR bytes or repeated near misses disables the skip and runs the automaton byte by byte: linear, about 4 to 8 times the typical constant [est.], measured at 0.6.
+- **Worst case.** Measured at 0.6 and again after D-117: a body of CR bytes costs 0.27x random file data per byte, repeated near misses 1.64x, near misses in the middle 2.04x; linear in every case (D-107).
 
 Rejected (D-020): Boyer-Moore-Horspool (O(n·m) worst case and a held-back copy), Two-Way (hard to make streaming across arbitrary splits), SIMD `memmem` (needs `unsafe` or a third-party crate).
 
@@ -397,17 +397,19 @@ The limits, their defaults, and where each is checked are in [`docs/API.md`](../
 All counters are `u64` with checked arithmetic. Worst-case memory per request:
 
 ```
-parser state                      ~256 B [est.]
+per-request state                 1 KiB (an UploadSession is 952 B on 64-bit; asserted)
 + parser buffer                   header block + max_name_bytes (+ max_filename_bytes under AcceptAlone)
                                   (+ max_token_bytes with a token field) + 32 for _charset_
 + driver head copy                the same size (D-064)
 + sniff_bytes                     sniff window
 + max_value_bytes                 the field being received
 + max_text_bytes                  all text values kept
-+ max_files × min(threshold, max_file_bytes), capped by max_body_bytes   in-memory files
++ max_files × min(threshold, max_file_bytes), capped by 2 × max_body_bytes   in-memory files
++ 96 B per field and 320 B per part of index; owned part-head copies
++ half the largest growing buffer
 ```
 
-Every term uses the effective limits (D-060). With the defaults and `Store::temp()`: 4,473,664 bytes, about 4.3 MiB per request at worst against 10 MiB of input [est.]; a route with `max_body_bytes = 4 KiB` is under 32 KiB. The caller's read buffer is not included.
+Every term uses the effective limits (D-060, D-093); `Limits::memory_bound` is the formula, and `tests/memory_bound.rs` measures it against hostile bodies. With the defaults and files over 64 KiB spilled it is about 6.5 MiB per request at worst against 10 MiB of input; a route with `max_body_bytes = 4 KiB` is under 32 KiB. The caller's read buffer is not included.
 
 ---
 
@@ -437,7 +439,7 @@ Linux `O_TMPFILE` with `linkat` would let anonymous files be persisted by link i
 
 ## 10. Threats
 
-Costs are per request unless stated; [est.] until measured at 0.6. Every threat gets an attack test named `test_attack_t<n>_<name>_refused` (or `_contained`), and `docs/SECURITY.md` (0.7) holds the full model.
+Costs are per request unless stated; measured costs are in `docs/PERFORMANCE.md` and `docs/SECURITY.md`. Every threat gets an attack test named `test_attack_t<n>_<name>_refused` (or `_contained`), and `docs/SECURITY.md` (0.7) holds the full model.
 
 | Id | Threat | Defence | Attack test | Cost |
 |---|---|---|---|---|
@@ -488,7 +490,7 @@ Out of scope, named so nobody assumes otherwise: decompression bombs (HTTP layer
 
 ### 11.1 Targets
 
-All [est.] until measured at 0.6 on the machines named in `docs/PERFORMANCE.md`.
+Measured at 0.6, 0.7, and 0.9 on the machines named in `docs/PERFORMANCE.md`, where every result is.
 
 | Operation | Input | Target |
 |---|---|---|
@@ -681,6 +683,7 @@ Every other open decision of the specification is decided below (D-004 to D-035)
 | D-084 | 2026-10-23 | `FileName::sanitized` replaces every Unicode `Default_Ignorable_Code_Point` with `_` before `path_lib::sanitize` | path-lib 1.0 replaces only the bidirectional controls and the BOM, so zero-width spaces, joiners, soft hyphens, variation selectors, and tag characters passed through (found by the T-21 test); the check runs only on non-ASCII names, one pass; the list belongs in path-lib, which is a follow-up there |
 | D-085 | 2026-10-23 | T-31 is tested by a `cfg(test)` counter of the bytes each wipe covers, not by reading freed memory; file metadata (field name, file name, content type) is wiped with the bytes | reading freed memory is undefined behaviour, even through a test allocator; the counter proves every drop path wipes the whole allocation, and crypt-io's volatile write does the rest |
 | D-086 | 2026-10-23 | 0.4 additions to the 0.2 contract: `impl Inspector for &mut I`; `OwnedPartHead::{new, with_capacity, copy_from, view}`; `StoredFile::persist` removes a partial destination when a copy fails | a caller keeps ownership of its inspector across calls; a driver-free consumer needs to keep a head past the parser's next call; a failed persist must leave nothing under the caller's name |
+| D-087 | 2026-10-23 | T-33 (1,000 concurrent parses within `memory_bound`) moves from 0.4 to 0.5 | it measures against `Limits::memory_bound` (#25) and `Store::memory_bound` (#71), both 0.5 items; it runs with the 0.5 `memory_bound.rs` peak-tracking test |
 | D-088 | 2026-10-23 | Inspectors chain: `impl Inspector for (A, B)` (A first; the first refusal wins and B is not asked; otherwise `Skip` if either skips; `failed` reaches both) and `impl Inspector for Box<I>` | customs-sec, sentinel-sec, and the application all inspect one parse; the combination rules are easy to get wrong, so they live in form-net once (found by the customs-sec and web-net shape review); a pair is static dispatch and costs one extra call per hook |
 | D-089 | 2026-10-23 | The driver opens the sink lazily: after `part_start`, `sniff`, and `data` for the first chunk have accepted the part, or at the end of an empty file; T-38 becomes "no sink call at all before the verdicts" | a sink that creates its destination in `open` (an object-store upload, a file named at open) created storage for a part the inspector then refused; now a refused or skipped part touches no storage (found by the shape review); no cost |
 | D-090 | 2026-10-23 | Shapes left for 0.5, from the customs-sec and web-net review: `FromForm::from_upload_mut(&mut Upload)` (typed fields and accessors from one upload), an all-errors extraction for re-rendering a form, and one owned type for both encodings (`get`/`get_all` on `Upload`, or `Upload::from_form`) | each is additive, neither consumer has code yet, and 0.5 is the feature-complete release; they are in the 0.5 roadmap |
@@ -719,4 +722,9 @@ Every other open decision of the specification is decided below (D-004 to D-035)
 | D-123 | 2026-11-05 | `RefusalDigest<N>`: one relaxed atomic counter per form-net code (61, at fixed slots), one per inspector code named at construction, one for the rest; `record(&FormError)` from the route's error path, not from `Inspector::failed` | PLAN 14 idea 0.8. Fixed slots make `record` a match and one add with no allocation and no lock; named codes are a const generic array, so nothing is sized at run time and nothing can overflow. Recording the returned error, not `failed`, counts extraction errors too (they happen after the parse) and cannot count twice. Not built on targets without atomic adds (thumbv6m), where form-net still builds. Measured 5 ns per record |
 | D-124 | 2026-11-05 | The 0.8 routes (login and avatar upload) are written as web-net will write them in `tests/alpha_routes.rs`, with a test double for customs-sec and csrf-sec's real tokens | web-net and customs-sec are not built yet; the routes found D-121 and D-122 now, and stay as the contract the real routes must keep. The 0.8 exit (a test deployment) waits for them |
 | D-125 | 2026-11-07 | 0.8.0 is released without its exit (the routes in web-net in a test deployment); that item and the API changes from it move to v0.9.x, before the freeze | web-net and customs-sec are 0.1.0 scaffolds with no build date; holding 0.8.0 holds TokenCheck, RefusalDigest, and the fail-open sniff fix back from every user. v0.9.x's exit already needs two weeks of their use, so the deployment is still required before 1.0, and an API change it finds can still be made before the freeze. James's standing order: keep moving |
-| D-087 | 2026-10-23 | T-33 (1,000 concurrent parses within `memory_bound`) moves from 0.4 to 0.5 | it measures against `Limits::memory_bound` (#25) and `Store::memory_bound` (#71), both 0.5 items; it runs with the 0.5 `memory_bound.rs` peak-tracking test |
+| D-126 | 2026-11-07 | `RawPair::decode_name` and `decode_value` return a component with no `%` or `+` borrowed from the body (checked as UTF-8), and decode into `out` only when there is something to decode; `out` must still be as long as the raw component, so whether a call fails never depends on the bytes | 0.9 polish: `raw_pairs` + `decode_into` on 1,000 fields was 0.72x form_urlencoded because it copied every byte; now 1.49x, and the 25-byte search query 0.91x to 1.63x. The signatures gain `where 'a: 'b` (the body outlives the result), which every existing call already met |
+| D-127 | 2026-11-07 | `Form` lookups compare names as bytes (a length check and a slice comparison) instead of re-reading each stored name as UTF-8 | 0.9 polish: `Form::get` measured 7 ns per field against its 5 ns target; every span was checked as UTF-8 when decoded. Now 3.3 ns |
+| D-128 | 2026-11-07 | Every entry point checks a multipart text field as text by one rule: when its whole value was read (not skipped at `part_start` or `data`), before `Inspector::field`, with the charset fixed at the part's start from the parser's `_charset_` record, skipped `_charset_` fields included. The check moves from `UploadSession` into the driver; the buffered parser checks after `data` instead of before | the 0.9 review: an inspector skipping `_charset_` (`iso-8859-1`) made `parse_multipart_inspected` refuse and `UploadSession` accept the same body, and a field skipped at `field()` with bytes that are not UTF-8 did the same; the session also called `field` for a value it then refused. `tests/skip_parity.rs` runs both paths over every skip shape at several splits |
+| D-129 | 2026-11-07 | `TokenCheck` refuses with `csrf.token_skipped` (500) when the token's part starts and ends without its value reaching `field` | the 0.9 review: an allow-list inspector that skips the token at `part_start` made every valid upload fail as `csrf.missing`, blaming the client for a server's configuration. Still fail closed; the code now names the fault |
+| D-130 | 2026-11-07 | The urlencoded text arena is sized `min(input, max_body_bytes, text and name budgets)` | the 0.9 review: separators and empty sequences cost no budget, so 256 KiB of `&` allocated 262,144 bytes against a 233,728-byte `memory_bound` (10 MiB under the defaults against a documented 7 MiB): FR-40 broken. `tests/memory_bound.rs` now feeds three separator shapes |
+| D-131 | 2026-11-07 | `Limits::memory_bound` counts 1 KiB of per-request state, not 256 bytes; a test holds `UploadSession` (952 bytes) and the parser under it | the 0.9 polish found the constant below the parser's own measured 384 bytes, so the bound was a few hundred bytes short of a true upper bound |

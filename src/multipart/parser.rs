@@ -58,7 +58,27 @@ pub enum Charset {
     Other,
 }
 
+/// Whether a declared `_charset_` value lets text be read: none, `utf-8`,
+/// or `us-ascii`.
+#[cfg(feature = "alloc")]
+pub(crate) fn declared_readable(declared: Option<&[u8]>) -> bool {
+    declared.is_none_or(|label| {
+        label.eq_ignore_ascii_case(b"utf-8") || label.eq_ignore_ascii_case(b"us-ascii")
+    })
+}
+
 impl Charset {
+    /// Whether a text part with this charset can be read: its own label,
+    /// else the `_charset_` declared before it (`declared_ok`), else UTF-8.
+    #[cfg(feature = "alloc")]
+    pub(crate) const fn readable(self, declared_ok: bool) -> bool {
+        match self {
+            Charset::Utf8 | Charset::Ascii => true,
+            Charset::Other => false,
+            Charset::Unspecified => declared_ok,
+        }
+    }
+
     pub(crate) fn from_label(label: &[u8]) -> Charset {
         if label.eq_ignore_ascii_case(b"utf-8") {
             Charset::Utf8

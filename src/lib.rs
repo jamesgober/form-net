@@ -219,6 +219,23 @@ mod tests {
         assert_eq!(VERSION.split('.').count(), 3, "expected MAJOR.MINOR.PATCH");
     }
 
+    /// The size table of `docs/API.md` (64-bit targets), held by a test.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_the_api_size_table_holds() {
+        use core::mem::size_of;
+        assert_eq!(size_of::<super::Boundary>(), 149);
+        assert!(size_of::<super::FormError>() <= 48);
+        assert_eq!(size_of::<super::Limits>(), 72);
+        assert_eq!(size_of::<super::RawPair<'static>>(), 48);
+        assert!(size_of::<super::MultipartParser<&mut [u8]>>() <= 384);
+        // `Limits::memory_bound` counts 1 KiB of per-request state.
+        #[cfg(feature = "alloc")]
+        assert!(size_of::<super::MultipartParser<alloc::vec::Vec<u8>>>() <= 1024);
+        #[cfg(feature = "fs")]
+        assert!(size_of::<super::UploadSession>() <= 1024);
+    }
+
     #[test]
     fn test_public_types_are_send_and_sync() {
         fn send_sync<T: Send + Sync>() {}

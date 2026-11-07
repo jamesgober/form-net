@@ -396,13 +396,7 @@ mod buffered {
     /// Whether a text field's charset (its own, else the `_charset_` field
     /// before it, else UTF-8) is one form-net reads as text.
     fn text_charset_ok(own: Charset, declared: Option<&[u8]>) -> bool {
-        match own {
-            Charset::Utf8 | Charset::Ascii => true,
-            Charset::Other => false,
-            Charset::Unspecified => declared.is_none_or(|label| {
-                label.eq_ignore_ascii_case(b"utf-8") || label.eq_ignore_ascii_case(b"us-ascii")
-            }),
-        }
+        own.readable(crate::multipart::parser::declared_readable(declared))
     }
 
     /// Parses a buffered `multipart/form-data` body with the default limits
@@ -616,6 +610,16 @@ mod buffered {
                         }
                         skipped = verdict(inspector.part_start(&part.head()), at)?;
                     }
+                    if !skipped && part.is_file() && sniff > 0 {
+                        let window = part.body.get(..sniff.min(part.body.len())).unwrap_or(&[]);
+                        skipped = verdict(inspector.sniff(&part.head(), window), at)?;
+                    }
+                    if !skipped && !part.body.is_empty() {
+                        skipped = verdict(inspector.data(part.index, part.body), at)?;
+                    }
+                    // A text field whose whole value was read is checked as
+                    // text before `field`, as the streaming driver checks it
+                    // (0.9: the two once differed on skipped fields).
                     if !skipped && !part.is_file() {
                         let text_at = Location::in_part(Some(part.index), part.offset);
                         if !charset_ok {
@@ -627,13 +631,6 @@ mod buffered {
                         if core::str::from_utf8(part.body).is_err() {
                             return Err(FormError::encoding(EncodingError::InvalidUtf8, text_at));
                         }
-                    }
-                    if !skipped && part.is_file() && sniff > 0 {
-                        let window = part.body.get(..sniff.min(part.body.len())).unwrap_or(&[]);
-                        skipped = verdict(inspector.sniff(&part.head(), window), at)?;
-                    }
-                    if !skipped && !part.body.is_empty() {
-                        skipped = verdict(inspector.data(part.index, part.body), at)?;
                     }
                     if !skipped && !part.is_file() {
                         skipped = verdict(inspector.field(part.name(), part.body), at)?;

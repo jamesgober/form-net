@@ -4,7 +4,7 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::error::{FormError, Location};
+use crate::error::{EncodingError, FormError, Location};
 use crate::hook::{Inspector, Sink, Verdict};
 use crate::limits::EmptyFilePolicy;
 use crate::multipart::owned_head::OwnedPartHead;
@@ -50,6 +50,9 @@ enum Part {
     Idle,
     Field {
         skip: bool,
+        /// Its charset (its own, else the `_charset_` before it) is one
+        /// form-net reads; fixed at the part's start.
+        readable: bool,
     },
     File {
         open: bool,
@@ -120,6 +123,7 @@ impl<S: Sink> State<S> {
     fn on_start<I: Inspector>(
         &mut self,
         head: &PartHead<'_>,
+        declared_ok: bool,
         inspector: &mut I,
         at: Location,
     ) -> Result<Next, FormError> {
@@ -141,11 +145,18 @@ impl<S: Sink> State<S> {
             _ => {
                 crate::wipe::wipe(&mut self.text);
                 self.text.clear();
+                let readable = head.charset().readable(declared_ok);
                 if refused(inspector.part_start(head), at)? {
-                    self.part = Part::Field { skip: true };
+                    self.part = Part::Field {
+                        skip: true,
+                        readable,
+                    };
                     return Ok(Next::SkipPart);
                 }
-                self.part = Part::Field { skip: false };
+                self.part = Part::Field {
+                    skip: false,
+                    readable,
+                };
                 Ok(Next::Continue)
             }
         }
@@ -228,9 +239,15 @@ impl<S: Sink> State<S> {
     ) -> Result<Next, FormError> {
         let index = self.head.view().index();
         match self.part {
-            Part::Field { skip: false } => {
+            Part::Field {
+                skip: false,
+                readable,
+            } => {
                 if refused(inspector.data(index, bytes), at)? {
-                    self.part = Part::Field { skip: true };
+                    self.part = Part::Field {
+                        skip: true,
+                        readable,
+                    };
                     return Ok(Next::SkipPart);
                 }
                 crate::wipe::append_wiping(&mut self.text, bytes, 256, self.value_cap);
@@ -403,6 +420,10 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
             let rest = input.get(pos..).unwrap_or(&[]);
             let seen = self.parser.bytes_seen();
             let parts = self.parser.parts_seen();
+            // The `_charset_` declared before the event (a part start comes
+            // in a call of its own, after the part before it ended).
+            let declared_ok =
+                crate::multipart::parser::declared_readable(self.parser.declared_charset());
             let step = self.parser.parse(rest, eof)?;
             pos = pos.saturating_add(step.consumed);
             let index = match &step.event {
@@ -411,7 +432,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
             };
             let at = Location::in_part(index, seen.saturating_add(step.consumed as u64));
             let next = match step.event {
-                Event::PartStart(head) => self.state.on_start(&head, inspector, at)?,
+                Event::PartStart(head) => self.state.on_start(&head, declared_ok, inspector, at)?,
                 Event::Data(bytes) => self.state.on_data(bytes, inspector, at)?,
                 Event::PartEnd(summary) => {
                     if let Some(done) = self.on_end(summary, inspector)? {
@@ -446,7 +467,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
         let skipped = summary.skipped
             || matches!(
                 part,
-                Part::Field { skip: true } | Part::File { skip: true, .. }
+                Part::Field { skip: true, .. } | Part::File { skip: true, .. }
             );
         let summary = PartSummary { skipped, ..summary };
         match part {
@@ -482,7 +503,23 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
                 refused(inspector.part_end(&summary), at)?;
                 Ok(Some(Done::File(output)))
             }
-            Part::Field { skip: false } => {
+            Part::Field {
+                skip: false,
+                readable,
+            } => {
+                // Checked as text before the inspector sees it as a field,
+                // as the buffered parser checks it: the charset fixed at the
+                // part's start, then the bytes as UTF-8.
+                let text_at = Location::in_part(Some(summary.index), at.offset);
+                if !readable {
+                    return Err(FormError::encoding(
+                        EncodingError::UnsupportedCharset,
+                        text_at,
+                    ));
+                }
+                if core::str::from_utf8(&self.state.text).is_err() {
+                    return Err(FormError::encoding(EncodingError::InvalidUtf8, text_at));
+                }
                 let name = self.state.head.view().name();
                 // The name is copied out of the head: the inspector borrows
                 // the text buffer.
@@ -517,11 +554,5 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
     #[cfg(feature = "fs")]
     pub(crate) const fn has_failed(&self) -> bool {
         self.failed
-    }
-
-    /// The charset the current (or last) part declared.
-    #[cfg(feature = "fs")]
-    pub(crate) fn current_head_charset(&self) -> crate::multipart::parser::Charset {
-        self.state.head.view().charset()
     }
 }

@@ -71,7 +71,7 @@ src/
 
 ## multipart
 
-`MultipartParser` is a state machine over a streaming KMP matcher for `CRLF--boundary`. The matcher starts in state 2, as if the CRLF before the first delimiter had been seen, so a body that opens with the delimiter and one with a preamble take the same path. From state 0 it skips eight bytes at a time while none is a CR. Every byte is examined a bounded number of times whatever the split (T-4).
+`MultipartParser` is a state machine over the delimiter search in `boundary.rs`. The search skips 32 bytes at a time to a `-` that follows a CR or LF (one pass finds delimiters and the bare line breaks D-113 refuses), then compares `--boundary` there a word at a time; a miss resumes at the byte that differed, because the bytes before it are boundary, which holds no line break (D-117). A match that spans chunks is carried as the streaming automaton's state (the delimiter's KMP state and the bare-break state), so every split gives the same events. The automaton starts in state 2, as if the CRLF before the first delimiter had been seen, so a body that opens with the delimiter and one with a preamble take the same path. Every byte is examined a bounded number of times whatever the split (T-4).
 
 Each header block is buffered whole (up to `max_part_header_bytes`) and read by `header.rs` through parse-net: one `Content-Disposition` of type `form-data`, quoted strings read with backslash as a literal and `\"` refused, starred parameters other than `filename*` refused, and the strictness rules of `API.md`. Errors carry split-invariant locations (D-080).
 

@@ -83,7 +83,7 @@ Exit: numbers published; no hot-path allocation; adversarial benchmarks linear; 
 - [x] The work-budget idea measured (PLAN 14, 0.2) and the first-bytes fingerprint idea (0.6) (D-107).
 - [x] The exit's bar, recorded per the exit rule: every family passes on every input except urlencoded to pairs on the 25-byte, two-field search query `q=rust+form+parser&page=2`, where form-net and form_urlencoded are level (0.88x collecting, 0.99x iterating, 1.04x with form-net's allocation-free decode; `docs/PERFORMANCE.md`). Why: both spend most of that input's time allocating the one owned string `+` decoding needs, and form-net checks more (strict UTF-8, every limit). James's decision (2026-10-29): accepted; the input stays level, since both crates make that one allocation, and no check is weakened to close it (D-111). It is tried again in the 0.9.0 polish pass (D-112).
 
-## v0.7.0 - Hardening
+## v0.7.0 - Hardening (DONE 2026-11-04)
 
 Exit: every threat has a passing attack test; the soak shows no growth; the differential log has no open item.
 
@@ -95,7 +95,7 @@ Exit: every threat has a passing attack test; the soak shows no growth; the diff
 - [x] `docs/SECURITY.md` complete: the threat model, the deviations, the corpus, the differential log, and the soak and fuzz results on the code that ships.
 - [x] The multipart families measured again on a quiet machine after the D-113 matcher change, and the baseline committed (`benches/baseline/2026-10-30/`). It found near-miss in 1,500-byte chunks below the bar, fixed as D-117. Every multipart family passes; the avatar ratios fell because multer's minimum fell, with form-net's time unchanged.
 
-## v0.8.0 - Alpha
+## v0.8.0 - Alpha (DONE 2026-11-07; the deployment moved to v0.9.x)
 
 Exit: the first site's form routes run on form-net in a test deployment; findings fixed test-first.
 

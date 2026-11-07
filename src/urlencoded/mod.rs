@@ -72,6 +72,16 @@ mod owned {
             self.text(s.name_start, s.name_len)
         }
 
+        /// Whether `s` is named `name`: a byte comparison, with no second
+        /// UTF-8 pass over a name that was checked when it was decoded.
+        fn is_named(&self, s: &Span, name: &str) -> bool {
+            s.name_len == name.len()
+                && self
+                    .arena
+                    .get(s.name_start..s.name_start.saturating_add(s.name_len))
+                    == Some(name.as_bytes())
+        }
+
         fn value_of(&self, s: &Span) -> &str {
             self.text(s.value_start, s.value_len)
         }
@@ -92,7 +102,7 @@ mod owned {
         pub fn get(&self, name: &str) -> Option<&str> {
             self.spans
                 .iter()
-                .find(|s| self.name_of(s) == name)
+                .find(|s| self.is_named(s, name))
                 .map(|s| self.value_of(s))
         }
 
@@ -114,7 +124,7 @@ mod owned {
         pub fn get_one(&self, name: &str) -> Result<Option<&str>, FormError> {
             let mut found = None;
             for s in &self.spans {
-                if self.name_of(s) == name {
+                if self.is_named(s, name) {
                     if found.is_some() {
                         return Err(FormError::Extract {
                             reason: ExtractError::Duplicate,
@@ -139,7 +149,7 @@ mod owned {
         pub fn get_all<'f>(&'f self, name: &'f str) -> impl Iterator<Item = &'f str> + 'f {
             self.spans
                 .iter()
-                .filter(move |s| self.name_of(s) == name)
+                .filter(move |s| self.is_named(s, name))
                 .map(move |s| self.value_of(s))
         }
 
@@ -208,7 +218,7 @@ mod owned {
         /// ```
         #[must_use]
         pub fn contains(&self, name: &str) -> bool {
-            self.spans.iter().any(|s| self.name_of(s) == name)
+            self.spans.iter().any(|s| self.is_named(s, name))
         }
     }
 
@@ -242,14 +252,17 @@ mod owned {
         let mut pairs = raw_pairs(input, limits);
         // The span table is sized from the separator count, capped by the
         // field limit; the arena from the input length (decoding never makes
-        // text longer). Neither grows afterwards.
+        // text longer), capped by the text and name budgets (separators and
+        // empty sequences cost no budget, so they must not size it either).
+        // Neither grows afterwards.
         let separators = crate::scan::count_byte(input, b'&');
         let cap = separators
             .saturating_add(1)
             .min(usize::try_from(limits.max_fields).unwrap_or(usize::MAX))
             .min(input.len());
         let mut spans = Vec::with_capacity(cap);
-        let mut arena = alloc::vec![0u8; input.len().min(limits.body_usize())];
+        let text = usize::try_from(limits.text_and_names()).unwrap_or(usize::MAX);
+        let mut arena = alloc::vec![0u8; input.len().min(limits.body_usize()).min(text)];
         let mut used = 0usize;
         let result = collect(&mut pairs, &mut arena, &mut used, &mut spans, percent);
         if let Err(e) = result {
