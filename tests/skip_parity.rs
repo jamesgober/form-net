@@ -109,9 +109,19 @@ fn session(
     .map_err(|e| e.code())
 }
 
+/// What, the body, the field to skip, where, and the result both must give
+/// (the number of fields kept, or the error code).
+type Case = (
+    &'static str,
+    Vec<u8>,
+    &'static str,
+    At,
+    Result<usize, &'static str>,
+);
+
 #[test]
 fn test_buffered_and_session_agree_on_skipped_fields() {
-    let cases: Vec<(&str, Vec<u8>, &'static str, At, Result<usize, &str>)> = vec![
+    let cases: Vec<Case> = vec![
         // A skipped `_charset_` still declares the charset of what follows.
         (
             "skipped charset",
