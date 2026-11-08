@@ -83,15 +83,15 @@ Out of scope, named so nobody assumes otherwise: decompression bombs (the HTTP l
 | an unquoted `name` or `filename` starting or ending with `'` | the token itself, or the quoted text | refused (`MalformedParameter`) | D-114 |
 | `name`, `filename`, or `filename*` not in lower case (`NAME=`) | the same parameter (RFC 7578), or an unknown one (readers that match exactly, multer 3.1 among them) | refused (`MalformedParameter`) | D-116 |
 | `name*`, `filename*0` and other starred parameters | joined or preferred by RFC 2231 readers | refused (`MalformedParameter`) | D-081 |
-| `filename` and `filename*` together | either one wins, by reader | refused (`BothFilenames`); `filename*` alone only by policy | D-025 |
-| a repeated `Content-Disposition` or parameter | first or last wins, by reader | refused | FR-21 |
-| header folding, whitespace before a colon, control bytes | accepted by some | refused | FR-20 |
+| `filename` and `filename*` together | either one wins, by reader | refused (`BothFilenames`); `filename*` alone only by policy | D-014, FR-27 |
+| a repeated `Content-Disposition` or parameter | first or last wins, by reader | refused | FR-26 |
+| header folding, whitespace before a colon, control bytes | accepted by some | refused | FR-25 |
 | `Content-Transfer-Encoding` other than identity | ignored by most | refused | T-26 |
 | a `multipart/*` part | passed on as bytes | refused (`NestedMultipart`) | T-27 |
 | a charset other than UTF-8 (`_charset_`, part `charset`) | decoded or replaced | refused | T-25 |
 | data past the close delimiter | ignored | at most `max_epilogue_bytes`, then refused | T-3 |
 
-Browsers send none of these. The capture corpus below proves that every body current Chrome and Edge send is accepted; the shapes they can send that form-net refuses by design are tested as refusals.
+Browsers send none of these. The capture corpus below proves that every body current Chrome, Edge, Firefox, and Safari send is accepted; the shapes they can send that form-net refuses by design are tested as refusals.
 
 ---
 
@@ -135,43 +135,43 @@ With all three fixed, the 1,319 mutants of the corpus split 519 read the same an
 
 | Mutation | Mutants | form-net same / refused / different | multer same / refused / different | Both accepted, read differently |
 |---|---|---|---|---|
-| Content-Transfer-Encoding | 55 | 0 / 55 / 0 | 55 / 0 / 0 | 0 |
-| NUL in header | 55 | 0 / 55 / 0 | 0 / 55 / 0 | 0 |
-| bare LF before a delimiter | 5 | 0 / 5 / 0 | 0 / 0 / 5 | 0 |
-| bare LF header endings | 5 | 0 / 5 / 0 | 0 / 0 / 5 | 0 |
-| close delimiter alone | 5 | 5 / 0 / 0 | 5 / 0 / 0 | 0 |
-| close delimiter cut short | 5 | 0 / 5 / 0 | 0 / 5 / 0 | 0 |
-| close delimiter then CR LF | 5 | 5 / 0 / 0 | 5 / 0 / 0 | 0 |
-| disposition type case | 55 | 55 / 0 / 0 | 55 / 0 / 0 | 0 |
-| duplicate Content-Disposition | 55 | 0 / 55 / 0 | 55 / 0 / 0 | 0 |
-| duplicate Content-Disposition, other name | 55 | 0 / 55 / 0 | 0 / 0 / 55 | 0 |
-| epilogue past the budget | 5 | 0 / 5 / 0 | 5 / 0 / 0 | 0 |
-| escaped quote in name | 55 | 0 / 55 / 0 | 0 / 0 / 55 | 0 |
-| extra spaces after semicolon | 55 | 55 / 0 / 0 | 55 / 0 / 0 | 0 |
-| filename before name | 30 | 30 / 0 / 0 | 30 / 0 / 0 | 0 |
-| filename* beside filename | 30 | 0 / 30 / 0 | 30 / 0 / 0 | 0 |
-| folded disposition | 55 | 0 / 55 / 0 | 0 / 55 / 0 | 0 |
-| header names lower case | 55 | 55 / 0 / 0 | 55 / 0 / 0 | 0 |
-| header names upper case | 55 | 55 / 0 / 0 | 55 / 0 / 0 | 0 |
-| headers reordered | 30 | 30 / 0 / 0 | 30 / 0 / 0 | 0 |
-| name single-quoted | 55 | 0 / 55 / 0 | 0 / 0 / 55 | 0 |
-| name unquoted | 49 | 49 / 0 / 0 | 49 / 0 / 0 | 0 |
-| name* beside name | 55 | 0 / 55 / 0 | 55 / 0 / 0 | 0 |
-| nested multipart type | 55 | 0 / 55 / 0 | 55 / 0 / 0 | 0 |
-| no space after semicolon | 55 | 55 / 0 / 0 | 55 / 0 / 0 | 0 |
-| padding past the budget | 5 | 0 / 5 / 0 | 5 / 0 / 0 | 0 |
-| parameter name case | 55 | 0 / 55 / 0 | 0 / 0 / 55 | 0 |
-| second filename parameter | 30 | 0 / 30 / 0 | 30 / 0 / 0 | 0 |
-| second name parameter | 55 | 0 / 55 / 0 | 55 / 0 / 0 | 0 |
-| short epilogue | 5 | 5 / 0 / 0 | 5 / 0 / 0 | 0 |
-| short preamble | 5 | 5 / 0 / 0 | 5 / 0 / 0 | 0 |
-| space around equals | 55 | 0 / 55 / 0 | 55 / 0 / 0 | 0 |
-| tab after semicolon | 55 | 55 / 0 / 0 | 55 / 0 / 0 | 0 |
-| transport padding | 5 | 5 / 0 / 0 | 5 / 0 / 0 | 0 |
-| unknown parameter | 55 | 55 / 0 / 0 | 55 / 0 / 0 | 0 |
-| whitespace before colon | 55 | 0 / 55 / 0 | 0 / 55 / 0 | 0 |
+| Content-Transfer-Encoding | 89 | 0 / 89 / 0 | 89 / 0 / 0 | 0 |
+| NUL in header | 89 | 0 / 89 / 0 | 0 / 89 / 0 | 0 |
+| bare LF before a delimiter | 7 | 0 / 7 / 0 | 0 / 0 / 7 | 0 |
+| bare LF header endings | 7 | 0 / 7 / 0 | 0 / 0 / 7 | 0 |
+| close delimiter alone | 7 | 7 / 0 / 0 | 7 / 0 / 0 | 0 |
+| close delimiter cut short | 7 | 0 / 7 / 0 | 0 / 7 / 0 | 0 |
+| close delimiter then CR LF | 7 | 7 / 0 / 0 | 7 / 0 / 0 | 0 |
+| disposition type case | 89 | 89 / 0 / 0 | 89 / 0 / 0 | 0 |
+| duplicate Content-Disposition | 89 | 0 / 89 / 0 | 89 / 0 / 0 | 0 |
+| duplicate Content-Disposition, other name | 89 | 0 / 89 / 0 | 0 / 0 / 89 | 0 |
+| epilogue past the budget | 7 | 0 / 7 / 0 | 7 / 0 / 0 | 0 |
+| escaped quote in name | 89 | 0 / 89 / 0 | 0 / 0 / 89 | 0 |
+| extra spaces after semicolon | 89 | 89 / 0 / 0 | 89 / 0 / 0 | 0 |
+| filename before name | 48 | 48 / 0 / 0 | 48 / 0 / 0 | 0 |
+| filename* beside filename | 48 | 0 / 48 / 0 | 48 / 0 / 0 | 0 |
+| folded disposition | 89 | 0 / 89 / 0 | 0 / 89 / 0 | 0 |
+| header names lower case | 89 | 89 / 0 / 0 | 89 / 0 / 0 | 0 |
+| header names upper case | 89 | 89 / 0 / 0 | 89 / 0 / 0 | 0 |
+| headers reordered | 48 | 48 / 0 / 0 | 48 / 0 / 0 | 0 |
+| name single-quoted | 89 | 0 / 89 / 0 | 0 / 0 / 89 | 0 |
+| name unquoted | 77 | 77 / 0 / 0 | 77 / 0 / 0 | 0 |
+| name* beside name | 89 | 0 / 89 / 0 | 89 / 0 / 0 | 0 |
+| nested multipart type | 89 | 0 / 89 / 0 | 89 / 0 / 0 | 0 |
+| no space after semicolon | 89 | 89 / 0 / 0 | 89 / 0 / 0 | 0 |
+| padding past the budget | 7 | 0 / 7 / 0 | 7 / 0 / 0 | 0 |
+| parameter name case | 89 | 0 / 89 / 0 | 0 / 0 / 89 | 0 |
+| second filename parameter | 48 | 0 / 48 / 0 | 48 / 0 / 0 | 0 |
+| second name parameter | 89 | 0 / 89 / 0 | 89 / 0 / 0 | 0 |
+| short epilogue | 7 | 7 / 0 / 0 | 7 / 0 / 0 | 0 |
+| short preamble | 7 | 7 / 0 / 0 | 7 / 0 / 0 | 0 |
+| space around equals | 89 | 0 / 89 / 0 | 89 / 0 / 0 | 0 |
+| tab after semicolon | 89 | 89 / 0 / 0 | 89 / 0 / 0 | 0 |
+| transport padding | 7 | 7 / 0 / 0 | 7 / 0 / 0 | 0 |
+| unknown parameter | 89 | 89 / 0 / 0 | 89 / 0 / 0 | 0 |
+| whitespace before colon | 89 | 0 / 89 / 0 | 0 / 89 / 0 | 0 |
 
-Run on 2026-10-29, after D-113, D-114, and D-116. No mutant is now accepted by both and read differently. Triage of what remains:
+Run again on 2026-11-07 for 0.9, after D-117 and on the corpus with Firefox and Safari: 2,119 mutants, and still none accepted by both and read differently. (The first run, on 2026-10-29 after D-113, D-114, and D-116, had 1,319 mutants and the same result.) Triage of what remains:
 
 - **multer accepts, form-net refuses:** transfer encodings, nested `multipart/*`, a duplicated `Content-Disposition` or parameter, `name*` and `filename*` beside the plain form, `name = "x"`, padding and epilogues past form-net's budgets. multer reads each by its own rule (first or last wins, encodings ignored); a reader in front of it could read them another way, which is why form-net refuses them. No action for form-net.
 - **multer reads differently from its own original, form-net refuses:** a second `Content-Disposition` with another name, `\"` in a name, single quotes, bare LF in headers and before a delimiter. multer reads each, differently from the unmutated body; a reader in front of multer could disagree with it. No action for form-net.

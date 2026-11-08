@@ -153,6 +153,16 @@ fn test_buffered_parse_and_extraction_stay_under_the_bound() {
     assert!(form.is_ok(), "{form:?}");
     assert!(p <= bound, "urlencoded peak {p} > {bound}");
 
+    // urlencoded: separators cost no budget, so a body of them must not
+    // size the text buffer (0.9 review).
+    for filler in [&b"&"[..], b"&&=&", b"=&"] {
+        let u: Vec<u8> = filler.iter().copied().cycle().take(256 * 1024).collect();
+        let (p, form) =
+            peak(|| form_net::parse_urlencoded_with(&u, &ROUTE, &Policy::DEFAULT).map(|f| f.len()));
+        assert!(form.is_ok() || form.is_err(), "parsed or refused");
+        assert!(p <= bound, "{filler:?} x 256 KiB: peak {p} > {bound}");
+    }
+
     struct Any;
     #[derive(Default)]
     struct AnyBuilder;

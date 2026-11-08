@@ -88,7 +88,7 @@
 //! [repository](https://github.com/jamesgober/form-net), with
 //! `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, and
 //! `docs/PERFORMANCE.md` (measurements against the other Rust form parsers).
-//! This release (0.8) is feature complete, optimised, hardened, and in alpha.
+//! This release (0.9) is feature complete, optimised, hardened, polished, and in beta.
 
 #![no_std]
 #![doc(html_root_url = "https://docs.rs/form-net")]
@@ -217,6 +217,23 @@ mod tests {
     fn test_version_matches_manifest() {
         assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
         assert_eq!(VERSION.split('.').count(), 3, "expected MAJOR.MINOR.PATCH");
+    }
+
+    /// The size table of `docs/API.md` (64-bit targets), held by a test.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_the_api_size_table_holds() {
+        use core::mem::size_of;
+        assert_eq!(size_of::<super::Boundary>(), 149);
+        assert!(size_of::<super::FormError>() <= 48);
+        assert_eq!(size_of::<super::Limits>(), 72);
+        assert_eq!(size_of::<super::RawPair<'static>>(), 48);
+        assert!(size_of::<super::MultipartParser<&mut [u8]>>() <= 384);
+        // `Limits::memory_bound` counts 1 KiB of per-request state.
+        #[cfg(feature = "alloc")]
+        assert!(size_of::<super::MultipartParser<alloc::vec::Vec<u8>>>() <= 1024);
+        #[cfg(feature = "fs")]
+        assert!(size_of::<super::UploadSession>() <= 1024);
     }
 
     #[test]

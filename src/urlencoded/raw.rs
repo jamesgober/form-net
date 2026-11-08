@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use crate::error::{FormError, Limit, Location};
+use crate::error::{EncodingError, FormError, Limit, Location};
 use crate::limits::{Limits, PercentPolicy};
 use crate::urlencoded::decode::decode_component;
 
@@ -457,8 +457,12 @@ impl<'a> RawPair<'a> {
         &self,
         out: &'b mut [u8],
         policy: PercentPolicy,
-    ) -> Result<&'b str, FormError> {
-        decode_component(self.name, out, policy).map_err(|e| e.shifted(self.offset))
+    ) -> Result<&'b str, FormError>
+    where
+        'a: 'b,
+    {
+        decoded(self.name, self.name_needs_decoding(), out, policy)
+            .map_err(|e| e.shifted(self.offset))
     }
 
     /// Decodes the value into `out` (see [`decode_into`](crate::decode_into)).
@@ -481,12 +485,15 @@ impl<'a> RawPair<'a> {
         &self,
         out: &'b mut [u8],
         policy: PercentPolicy,
-    ) -> Result<&'b str, FormError> {
+    ) -> Result<&'b str, FormError>
+    where
+        'a: 'b,
+    {
         let at = self
             .offset
             .saturating_add(self.name.len() as u64)
             .saturating_add(1);
-        decode_component(self.value, out, policy).map_err(|e| e.shifted(at))
+        decoded(self.value, self.value_needs_decoding(), out, policy).map_err(|e| e.shifted(at))
     }
 
     /// The byte offset of the sequence in the body.
@@ -505,12 +512,73 @@ impl<'a> RawPair<'a> {
     }
 }
 
+/// A component as text: borrowed from the body when it holds no `%` or `+`
+/// (no copy), decoded into `out` otherwise. `out` must be as long as the
+/// raw component either way, so whether a call fails never depends on the
+/// bytes.
+fn decoded<'b>(
+    raw: &'b [u8],
+    needs_decoding: bool,
+    out: &'b mut [u8],
+    policy: PercentPolicy,
+) -> Result<&'b str, FormError> {
+    if needs_decoding {
+        return decode_component(raw, out, policy);
+    }
+    if out.len() < raw.len() {
+        return Err(FormError::BufferTooSmall { needed: raw.len() });
+    }
+    // Located at the component's start, as decoding locates it.
+    core::str::from_utf8(raw)
+        .map_err(|_| FormError::encoding(EncodingError::InvalidUtf8, Location::at(0)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::vec::Vec;
 
     type Pairs<'a> = Vec<(&'a [u8], &'a [u8])>;
+
+    /// 0.9: a plain component is borrowed from the body, not copied; the
+    /// buffer rule and the errors are the same either way.
+    #[test]
+    fn test_decode_borrows_plain_components_and_keeps_the_rules() {
+        let body = b"name=value&a%20b=c+d&bad=\xff";
+        let mut it = super::raw_pairs(body, &crate::Limits::DEFAULT);
+        let mut out = [0u8; 16];
+        let p = it.next().unwrap().unwrap();
+        let name = p.decode_name(&mut out, PercentPolicy::Refuse).unwrap();
+        assert_eq!(name, "name");
+        assert_eq!(name.as_ptr(), body.as_ptr(), "borrowed from the body");
+        let value = p.decode_value(&mut out, PercentPolicy::Refuse).unwrap();
+        assert_eq!(value.as_ptr(), body[5..].as_ptr());
+        let mut short = [0u8; 3];
+        assert!(matches!(
+            p.decode_name(&mut short, PercentPolicy::Refuse),
+            Err(FormError::BufferTooSmall { needed: 4 })
+        ));
+        let p = it.next().unwrap().unwrap();
+        assert_eq!(
+            p.decode_name(&mut out, PercentPolicy::Refuse).unwrap(),
+            "a b"
+        );
+        assert_eq!(
+            p.decode_value(&mut out, PercentPolicy::Refuse).unwrap(),
+            "c d"
+        );
+        let p = it.next().unwrap().unwrap();
+        let e = p.decode_value(&mut out, PercentPolicy::Refuse).unwrap_err();
+        assert_eq!(
+            (e.code(), e.location().map(|l| l.offset)),
+            ("encoding.invalid_utf8", Some(25))
+        );
+        // The same error as decoding gives for an escaped bad byte there.
+        let mut it = super::raw_pairs(b"name=value&a%20b=c+d&bad=%FF", &crate::Limits::DEFAULT);
+        let p = it.nth(2).unwrap().unwrap();
+        let d = p.decode_value(&mut out, PercentPolicy::Refuse).unwrap_err();
+        assert_eq!((d.code(), d.location()), (e.code(), e.location()));
+    }
 
     fn pairs(input: &[u8]) -> Result<Pairs<'_>, FormError> {
         raw_pairs(input, &Limits::DEFAULT)

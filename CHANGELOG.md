@@ -13,6 +13,34 @@
 
 ---
 
+## [0.9.0] - 2026-11-08
+
+Polish: every accepted gap, deferred item, and missed target tried again,
+a fresh performance baseline, and the security review run again. What
+still stands is in `dev/READINESS-1.0.md`.
+
+### Changed
+
+- `RawPair::decode_name` and `decode_value` return a component with
+  nothing to decode borrowed from the body: `raw_pairs` on 1,000 fields
+  goes from 0.72x to 1.49x form_urlencoded (D-126).
+- `Form` lookups compare names as bytes: `get` from 7 to 3.3 ns per field
+  (D-127).
+- Multipart text fields are checked as text by one rule in every entry
+  point, before `Inspector::field`; a skipped `_charset_` field still
+  declares the charset of what follows (D-128).
+- `TokenCheck` refuses with `csrf.token_skipped` (500) when another
+  inspector skipped the token's part (D-129).
+
+### Fixed
+
+- A urlencoded body of separators could allocate past `memory_bound`
+  (D-130).
+- `Limits::memory_bound` counted 256 bytes of per-request state; it is
+  1 KiB, and a test holds every per-request struct under it (D-131).
+
+---
+
 ## [0.8.0] - 2026-11-07
 
 Alpha: the parts of the first site's routes that do not wait for web-net
@@ -333,7 +361,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/jamesgober/form-net/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/form-net/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/form-net/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/form-net/compare/v0.5.0...v0.6.0

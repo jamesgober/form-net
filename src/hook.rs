@@ -304,6 +304,11 @@ impl Inspector for NoInspector {}
 /// - `csrf.not_text`: a token that is not UTF-8;
 /// - whatever `verify` returns.
 ///
+/// Another inspector in the pair must not skip the token's part: the check
+/// never sees a value that was not read, so it refuses the body with
+/// `csrf.token_skipped` and status 500, a configuration error to fix in the
+/// other inspector, not a client's.
+///
 /// It works for multipart and urlencoded bodies alike, and composes with
 /// other inspectors as a pair: `(customs, check)`. Browsers send fields in
 /// document order, so the form puts the hidden token input before its file
@@ -341,6 +346,8 @@ pub struct TokenCheck<V> {
     verify: V,
     seen: bool,
     verified: bool,
+    /// The token's part started and its value has not come yet.
+    pending: bool,
 }
 
 impl<V: FnMut(&str) -> Result<(), Refusal>> TokenCheck<V> {
@@ -352,6 +359,7 @@ impl<V: FnMut(&str) -> Result<(), Refusal>> TokenCheck<V> {
             verify,
             seen: false,
             verified: false,
+            pending: false,
         }
     }
 
@@ -375,12 +383,14 @@ impl<V> core::fmt::Debug for TokenCheck<V> {
 const TOKEN_MISSING: Refusal = Refusal::new(403, "csrf.missing");
 const TOKEN_DUPLICATE: Refusal = Refusal::new(403, "csrf.duplicate");
 const TOKEN_NOT_TEXT: Refusal = Refusal::new(403, "csrf.not_text");
+const TOKEN_SKIPPED: Refusal = Refusal::new(500, "csrf.token_skipped");
 
 impl<V: FnMut(&str) -> Result<(), Refusal>> Inspector for TokenCheck<V> {
     fn part_start(&mut self, head: &PartHead<'_>) -> Verdict {
         if head.is_file() && !self.verified {
             return Verdict::Refuse(TOKEN_MISSING);
         }
+        self.pending = !head.is_file() && head.name() == self.name;
         Verdict::Continue
     }
 
@@ -388,6 +398,7 @@ impl<V: FnMut(&str) -> Result<(), Refusal>> Inspector for TokenCheck<V> {
         if name != self.name {
             return Verdict::Continue;
         }
+        self.pending = false;
         if self.seen {
             return Verdict::Refuse(TOKEN_DUPLICATE);
         }
@@ -402,6 +413,15 @@ impl<V: FnMut(&str) -> Result<(), Refusal>> Inspector for TokenCheck<V> {
             }
             Err(refusal) => Verdict::Refuse(refusal),
         }
+    }
+
+    fn part_end(&mut self, _summary: &PartSummary) -> Verdict {
+        // The token's part ended without its value reaching `field`:
+        // another inspector skipped it.
+        if core::mem::take(&mut self.pending) {
+            return Verdict::Refuse(TOKEN_SKIPPED);
+        }
+        Verdict::Continue
     }
 
     fn end(&mut self) -> Verdict {

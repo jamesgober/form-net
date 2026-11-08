@@ -219,6 +219,56 @@ fn test_attack_two_tokens_are_refused_whichever_is_valid() {
     }
 }
 
+/// An allow-list inspector that forgot the token field.
+struct OnlyTitle;
+
+impl Inspector for OnlyTitle {
+    fn part_start(&mut self, head: &PartHead<'_>) -> Verdict {
+        if head.is_file() || head.name() == "title" {
+            Verdict::Continue
+        } else {
+            Verdict::Skip
+        }
+    }
+}
+
+#[test]
+fn test_a_token_skipped_by_another_inspector_is_a_configuration_error() {
+    let csrf = Csrf::new(KEY).unwrap();
+    let token = csrf.issue(SESSION).unwrap();
+    let body = upload_body(token.as_str(), true);
+    let d = dir("skipped");
+    let store = Store::in_dir(&d).unwrap().memory_threshold(0);
+    for size in [1, 7, body.len()] {
+        // Either order of the pair: the check sees the part start, never
+        // the value, and says so instead of blaming the client.
+        let mut check = TokenCheck::new("csrf_token", verifier(&csrf, SESSION));
+        let (result, seen) = run(&store, &body, size, &mut (OnlyTitle, &mut check));
+        let err = result.unwrap_err();
+        assert_eq!((err.status_hint(), err.code()), (500, "csrf.token_skipped"));
+        assert_eq!(seen.file_bytes, 0);
+        let mut check = TokenCheck::new("csrf_token", verifier(&csrf, SESSION));
+        let (result, _) = run(&store, &body, size, &mut (&mut check, OnlyTitle));
+        assert_eq!(result.unwrap_err().code(), "csrf.token_skipped");
+    }
+    // Listing the token in the allow-list is the fix.
+    struct WithToken;
+    impl Inspector for WithToken {
+        fn part_start(&mut self, head: &PartHead<'_>) -> Verdict {
+            if head.is_file() || head.name() == "title" || head.name() == "csrf_token" {
+                Verdict::Continue
+            } else {
+                Verdict::Skip
+            }
+        }
+    }
+    let mut check = TokenCheck::new("csrf_token", verifier(&csrf, SESSION));
+    let (result, _) = run(&store, &body, 5, &mut (WithToken, &mut check));
+    assert!(result.is_ok());
+    assert_eq!(store.stats().files_spilled, 1);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 form! {
     #[derive(Debug)]
     struct Login {

@@ -299,7 +299,9 @@ impl Limits {
     /// The worst-case bytes one parse with these limits can hold in memory,
     /// for admission control before a body is read (FR-40, D-093).
     ///
-    /// The sum of: parser state (256); the parser buffer and the driver's
+    /// The sum of: the per-request state (1 KiB: an `UploadSession` holds
+    /// the parser, the driver, and the upload in 952 bytes on 64-bit
+    /// targets); the parser buffer and the driver's
     /// copy of the current part head (each `multipart_buffer_len` under the
     /// most demanding policy); the sniff window; the field being received
     /// (`max_value_bytes`); the text kept (`max_text_bytes`) and its names
@@ -333,7 +335,9 @@ impl Limits {
     /// ```
     #[must_use]
     pub const fn memory_bound(&self, file_in_memory_bytes: u64) -> u64 {
-        const PARSER_STATE: u64 = 256;
+        // Held by `test_the_api_size_table_holds`: every per-request
+        // struct fits (0.9: this was 256, below the parser's own 384).
+        const PARSER_STATE: u64 = 1024;
         const FIELD_INDEX: u64 = 96;
         const PART_INDEX: u64 = 320;
         let head = (self.max_part_header_bytes as u64)

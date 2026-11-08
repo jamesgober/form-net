@@ -23,12 +23,12 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::error::{EncodingError, ExtractError, FormError, Limit, Location};
+use crate::error::{ExtractError, FormError, Limit, Location};
 use crate::hook::{Inspector, Sink};
 use crate::limits::{Limits, Policy};
 use crate::multipart::driver::{Driver, Progress};
 use crate::multipart::filename::{FileName, FileNameSource};
-use crate::multipart::parser::{Charset, ContentType, MultipartParser, PartHead};
+use crate::multipart::parser::{ContentType, MultipartParser, PartHead};
 
 /// What went wrong with storage.
 #[non_exhaustive]
@@ -1241,7 +1241,6 @@ impl Upload {
 pub struct UploadSession {
     driver: Driver<Vec<u8>, StoreSink>,
     upload: Upload,
-    declared: Option<Vec<u8>>,
     text_cap: usize,
     ended: bool,
     failed: bool,
@@ -1274,7 +1273,6 @@ impl UploadSession {
         Ok(UploadSession {
             driver: Driver::new(parser, store.sink(limits)),
             upload: Upload::default(),
-            declared: None,
             text_cap: usize::try_from(limits.text_and_names()).unwrap_or(usize::MAX),
             ended: false,
             failed: false,
@@ -1355,12 +1353,12 @@ impl UploadSession {
             let rest = chunk.get(pos..).unwrap_or(&[]);
             let (n, progress) = self.driver.push(rest, eof, inspector)?;
             pos = pos.saturating_add(n);
-            let mut stored_field = false;
             match progress {
                 Progress::Field { name, value } => {
+                    // Checked as text by the driver before the inspector
+                    // saw it, as the buffered parser checks it.
                     let cap = self.text_cap;
                     self.upload.push_field(name, value, cap);
-                    stored_field = true;
                 }
                 Progress::File(f) => self.upload.files.push(f),
                 Progress::End => {
@@ -1375,42 +1373,7 @@ impl UploadSession {
                     }
                 }
             }
-            if stored_field {
-                self.check_last_field()?;
-            }
         }
-    }
-
-    /// Checks the field just stored as text, the way the buffered parser
-    /// does: its charset (its own, else the `_charset_` field before it,
-    /// else UTF-8) must be UTF-8 or US-ASCII, and its bytes valid UTF-8.
-    fn check_last_field(&mut self) -> Result<(), FormError> {
-        let Some(span) = self.upload.spans.last().copied() else {
-            return Ok(());
-        };
-        let readable = match self.driver.current_head_charset() {
-            Charset::Utf8 | Charset::Ascii => true,
-            Charset::Other => false,
-            Charset::Unspecified => self.declared.as_deref().is_none_or(|l| {
-                l.eq_ignore_ascii_case(b"utf-8") || l.eq_ignore_ascii_case(b"us-ascii")
-            }),
-        };
-        let at = Location::in_part(None, self.bytes_seen());
-        if !readable {
-            return Err(FormError::encoding(EncodingError::UnsupportedCharset, at));
-        }
-        let value = self
-            .upload
-            .text
-            .get(span.value.0..span.value.0.saturating_add(span.value.1))
-            .unwrap_or(&[]);
-        if core::str::from_utf8(value).is_err() {
-            return Err(FormError::encoding(EncodingError::InvalidUtf8, at));
-        }
-        if self.upload.slice(span.name) == "_charset_" {
-            self.declared = Some(value.to_vec());
-        }
-        Ok(())
     }
 }
 
