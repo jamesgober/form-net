@@ -88,7 +88,7 @@
 //! [repository](https://github.com/jamesgober/form-net), with
 //! `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, and
 //! `docs/PERFORMANCE.md` (measurements against the other Rust form parsers).
-//! This release (0.8) is feature complete, optimised, hardened, and in alpha.
+//! This release (0.9) is feature complete, optimised, hardened, polished, and in beta.
 
 #![no_std]
 #![doc(html_root_url = "https://docs.rs/form-net")]

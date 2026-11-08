@@ -106,11 +106,11 @@ Released 2026-11-07 without its exit: web-net and customs-sec are not built yet,
 - Moved to v0.9.x (D-125): web-net runs the same routes end to end with the real customs-sec as the `Inspector` and csrf-sec on the captured token, in a test deployment; API changes from that use.
 - [x] Defence idea: refusal digest (PLAN 14): `RefusalDigest`, 5 ns per record (D-123).
 
-## v0.9.0 - Polish (before any release candidate)
+## v0.9.0 - Polish (DONE 2026-11-08)
 
 Exit: every item accepted, deferred, or missed earlier in the series has been tried again, and is now fixed or listed in the 1.0 readiness note for James with its numbers and the reason it stands. Nothing accepted mid-series becomes final without this pass (D-112).
 
-- [ ] Revisit every accepted gap, deferred item, known issue, and missed target in this file and in `dev/PLAN.md`'s decision log. Known now:
+- [x] Revisit every accepted gap, deferred item, known issue, and missed target in this file and in `dev/PLAN.md`'s decision log (D-126 to D-131; what stands is in `dev/READINESS-1.0.md`). Known at the start:
   - urlencoded pairs on the 25-byte search query, level with form_urlencoded (D-111);
   - `raw_pairs` + `decode_into` on 1,000 fields at 0.72x form_urlencoded's iteration (it copies every byte; `pairs` on the same input passes at 1.34x and over);
   - `pairs` on 1 MiB of escapes reading 332 or 452 µs by code placement under the default profile, the same under fat LTO (D-117): find the loop and make it steady;
@@ -118,9 +118,9 @@ Exit: every item accepted, deferred, or missed earlier in the series has been tr
   - `parse_urlencoded` of ten fields at its 400 ns estimate (379 to 419 ns, 405 ns in the 0.7 baseline);
   - the in-memory upload's drop cost, set by crypt-io's byte-at-a-time wipe;
   - `FileName::sanitized` filtering default-ignorables itself until path-lib does (D-084).
-- [ ] A fresh performance pass against the competitors at their then-current versions: rerun `benches/`, commit a new baseline, and tune whatever moved.
-- [ ] The security and edge-case review run again over the whole crate, with every finding fixed test-first.
-- [ ] The 1.0 readiness note for James: whatever is still open after the three items above, with numbers and a recommendation for each.
+- [x] A fresh performance pass against the competitors at their then-current versions (unchanged since 0.7): `benches/baseline/2026-11-08`, the median of five runs on a loaded machine. No ratio fell; `raw_pairs` on 1,000 fields 0.72x to 1.49x (D-126). Absolute times wait for a quiet run (v0.9.x below): under full load they read about 1.5x high on both sides, which is a measurement condition, not a regression.
+- [x] The security and edge-case review run again over the whole crate, with every finding fixed test-first (D-128 to D-131, `tests/skip_parity.rs`, `tests/memory_bound.rs`).
+- [x] The 1.0 readiness note for James: `dev/READINESS-1.0.md`.
 
 ## v0.9.x - Beta and release candidates
 
@@ -128,6 +128,7 @@ Exit: one release candidate with no change for two weeks of use by web-net and c
 
 - [ ] From 0.8 (D-125): web-net runs the login and upload routes on form-net end to end, customs-sec as the `Inspector`, csrf-sec on the captured token, in a test deployment; `tests/alpha_routes.rs` is the contract. Findings fixed test-first; an API change it needs is made before the freeze.
 - [ ] API freeze candidates `0.9.x`; fixes only.
+- [ ] Absolute times measured again on a quiet machine, against `benches/baseline/2026-10-30`; the 0.9.0 pass could only measure ratios reliably (the machine stayed at 100% load).
 - [ ] Adversarial review (DIRECTIVES definition of done, item 10) with every finding fixed test-first.
 - [ ] `docs/STABILITY-1.0.md` drafted.
 - [ ] Defence idea: high-byte refusal outside `filename` checked against the browser corpus (PLAN 14).

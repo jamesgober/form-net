@@ -11,7 +11,13 @@
 
 ## [Unreleased]
 
-Polish (0.9).
+---
+
+## [0.9.0] - 2026-11-08
+
+Polish: every accepted gap, deferred item, and missed target tried again,
+a fresh performance baseline, and the security review run again. What
+still stands is in `dev/READINESS-1.0.md`.
 
 ### Changed
 
@@ -355,7 +361,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/jamesgober/form-net/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/form-net/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/form-net/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jamesgober/form-net/compare/v0.5.0...v0.6.0

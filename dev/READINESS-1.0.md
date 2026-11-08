@@ -2,7 +2,7 @@
 
 For James: everything still open after the 0.9 polish pass (D-112), with its numbers and a recommendation. The pass tried every accepted gap, deferred item, known issue, and missed target again; what it fixed is in the changelog for 0.9.0 and in the decision log (D-126 to D-131). What stands is below.
 
-**Written:** 2026-11-07, for 0.9.0. Numbers are Linux unless marked; the machine and method are in `docs/PERFORMANCE.md`.
+**Written:** 2026-11-07, for 0.9.0; ratios updated 2026-11-08. Ratios against the competitors are the 0.9.0 baseline (`benches/baseline/2026-11-08`, Windows, median of five runs on a loaded machine); other numbers are Linux unless marked. The machine and method are in `docs/PERFORMANCE.md`.
 
 ---
 
@@ -11,15 +11,15 @@ For James: everything still open after the 0.9 polish pass (D-112), with its num
 | Item | Where it stands | Recommendation |
 |---|---|---|
 | The deployment test: web-net running the login and upload routes on form-net with the real customs-sec, for two weeks (the v0.9.x exit, D-125) | web-net and customs-sec are 0.1.0 scaffolds. `tests/alpha_routes.rs` is the contract their routes must keep, with csrf-sec's real tokens and a customs test double | Keep 1.0 behind it. It is the only test of the API by a real caller; the freeze should not come before it |
-| The 25-byte search query `q=rust+form+parser&page=2` through `pairs` is level with form_urlencoded: 0.97x to 0.99x (bar 1.20x) | You accepted it as level at 0.6 (D-111). Both crates spend the time on the one owned string that `+` decoding needs; form-net checks more on top. `raw_pairs` + `decode_into` on the same input is now 1.63x | Accept for 1.0. Closing it means a different return type (a small-string type instead of `Cow<str>`), which is an API change for one input shape |
+| The 25-byte search query `q=rust+form+parser&page=2` through `pairs` is level with form_urlencoded: 0.94x collecting, 1.05x iterating (bar 1.20x) | You accepted it as level at 0.6 (D-111). Both crates spend the time on the one owned string that `+` decoding needs; form-net checks more on top. `raw_pairs` + `decode_into` on the same input is now 1.55x (1.32x to 1.69x over five runs) | Accept for 1.0. Closing it means a different return type (a small-string type instead of `Cow<str>`), which is an API change for one input shape |
 
 ## Stands, with a reason (no decision needed)
 
 | Item | Numbers | Why it stands |
 |---|---|---|
 | Two D-117 regressions against 0.6 | near misses in the middle of a delimiter 139.55 to 150.21 µs (+8%), still 2.45x multer; 100 parts of 10 bytes 15.08 to 15.76 µs (+4%) | The matcher that refuses bare line breaks (D-113) compares where it stepped; an adversarial shape pays for the check. Both pass the bar |
-| Near-miss on a whole 1 MiB body | 1.23x multer (bar 1.20x) | Passes, with a thin margin; watched in every baseline |
-| `pairs` on 1 MiB of escapes reads 332 or 452 µs | 326 to 334 µs under the crate's own release profile (fat LTO, one codegen unit) | Code placement under the benchmark's default profile, not a cost users pay (D-117) |
+| Near-miss on a 1 MiB body | whole: 1.39x multer (was 1.23x); 1,500-byte chunks: 1.46x, one run of five at 1.10x (bar 1.20x) | Passes on the median; the chunked row is the one to watch, and a quiet run should settle it |
+| The 1 MiB escaped body moves with code placement under the benchmark's default profile | 0.7: `pairs` 332 or 452 µs, 326 to 334 µs under the crate's release profile. 0.9: `pairs` gained and `raw_pairs` + `decode_into` lost (2.88x to 2.13x); under the release profile 0.9.0 reads 2.25x to 2.42x against 0.8.0's 1.91x to 2.25x | Not a cost users pay, who build with the release profile (D-117, D-133); every row passes either way |
 | `parse_urlencoded` of ten fields | 379 to 419 ns against a 400 ns estimate | At the estimate: two allocations and a scan |
 | `FormKind::detect` | 114 ns against 100 ns | parse-net's strict media-type grammar; belongs in parse-net |
 | `RefusalDigest::record` | 5 to 6 ns against an estimate of 1 ns | One locked add costs that on this machine; the estimate was wrong, not the code |
@@ -36,6 +36,7 @@ For James: everything still open after the 0.9 polish pass (D-112), with its num
 
 ## Left for 0.9.x, before the freeze
 
+- Absolute times on a quiet machine: the 0.9.0 baseline ran at 100% load, so its absolute times read about 1.5x high; its ratios hold. The 0.7.0 quiet numbers stay the absolute reference until then.
 - The deployment test above.
 - The adversarial review (DIRECTIVES, definition of done item 10).
 - `docs/STABILITY-1.0.md`, the full audit.
