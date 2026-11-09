@@ -10,6 +10,9 @@
 /// - The optional `ignore = [ ... ];` after the struct lists names that are
 ///   accepted and dropped (the anti-forgery field and `_charset_` are the
 ///   usual ones). Every other undeclared name is refused.
+/// - Two fields with one wire name, or a field whose wire name is also
+///   ignored, do not compile: the second could never receive a value
+///   (D-138).
 /// - Field types implement [`FromField`](crate::FromField); see the value
 ///   rules in `docs/API.md`.
 ///
@@ -45,6 +48,28 @@
 /// assert!(Signup::from_urlencoded(b"email=a&password=p&age=1&admin=1").is_err());
 /// # Ok::<(), form_net::FormError>(())
 /// ```
+///
+/// A second field with the same wire name does not compile (D-138):
+///
+/// ```compile_fail
+/// form_net::form! {
+///     pub struct Twice {
+///         pub first: String = "a",
+///         pub second: Option<String> = "a",
+///     }
+/// }
+/// ```
+///
+/// Nor does a field whose name is also ignored:
+///
+/// ```compile_fail
+/// form_net::form! {
+///     pub struct Shadowed {
+///         pub csrf_token: String,
+///     }
+///     ignore = ["csrf_token"];
+/// }
+/// ```
 #[macro_export]
 macro_rules! form {
     (
@@ -64,6 +89,14 @@ macro_rules! form {
                 $fvis $field: $ty,
             )*
         }
+
+        const _: () = ::core::assert!(
+            !$crate::__repeated_wire_name(&[
+                $( $crate::__form_wire!($field $(, $wire)?), )*
+                $( $( $ignored, )* )?
+            ]),
+            "form!: two fields, or a field and an ignored name, share one wire name"
+        );
 
         const _: () = {
             // The struct's own visibility: a builder more public than its

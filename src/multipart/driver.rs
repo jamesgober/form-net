@@ -499,8 +499,11 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
                     refused(inspector.part_end(&summary), at)?;
                     return Ok(None);
                 }
-                let output = self.state.sink.close()?;
+                // `part_end` before `close`: a refusal here must abort the
+                // sink, and a sink that commits in `close` (an object store, a
+                // named file) would otherwise keep a refused file (D-139).
                 refused(inspector.part_end(&summary), at)?;
+                let output = self.state.sink.close()?;
                 Ok(Some(Done::File(output)))
             }
             Part::Field {

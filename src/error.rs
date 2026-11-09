@@ -568,7 +568,8 @@ pub enum SyntaxError {
     EmptyName,
     /// A parameter given twice.
     DuplicateParameter,
-    /// Malformed parameters (or more than 16 on one header).
+    /// Malformed parameters: more than 16 on one header, an empty
+    /// parameter, or a value that holds `name=` (D-136).
     MalformedParameter,
     /// A quoted parameter value that contains `\"`.
     AmbiguousQuote,

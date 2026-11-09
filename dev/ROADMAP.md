@@ -130,10 +130,10 @@ Exit: one release candidate with no change for two weeks of use by web-net and c
   - [x] web-net runs both routes on 0.9.0 with csrf-sec through `TokenCheck`, with no API change (D-134; web-net `tests/actions.rs`, `examples/site.rs`).
   - [ ] customs-sec as the `Inspector` (a test double today).
   - [ ] Two weeks on a deployed site (James).
-- [ ] API freeze candidates `0.9.x`; fixes only.
+- [ ] API freeze candidates `0.9.x`; fixes only. `0.9.1` is the first (after the adversarial review); its two weeks start when customs-sec and the deployment are in.
 - [ ] Absolute times measured again on a quiet machine, against `benches/baseline/2026-10-30`; the 0.9.0 pass could only measure ratios reliably (the machine stayed at 100% load).
-- [ ] Adversarial review (DIRECTIVES definition of done, item 10) with every finding fixed test-first.
-- [ ] `docs/STABILITY-1.0.md` drafted.
+- [x] Adversarial review (DIRECTIVES definition of done, item 10) with every finding fixed test-first: three independent reviews, 18 findings (one high), each fixed against its failing test (D-136 to D-146, `docs/SECURITY.md`).
+- [x] `docs/STABILITY-1.0.md` drafted (0.9.1): the frozen surface, the reading contract (accepted bodies read the same; refusals never loosened; new refusals only for reader disagreements), MSRV, and the audit table.
 - [x] Defence idea: high-byte refusal outside `filename` checked against the browser corpus (PLAN 14): refuted, every browser sends UTF-8 field names; no new refusal (D-135).
 
 ## v1.0.0 - Stable

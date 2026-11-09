@@ -103,9 +103,17 @@ impl Drop for FileData {
 }
 
 impl FromField for FileData {
-    type Slot = Option<FileData>;
+    /// Whether the field arrived (an empty file input counts), and the file.
+    type Slot = (bool, Option<FileData>);
 
     fn accept_file(slot: &mut Self::Slot, file: FileValue<'_>) -> Result<(), ValueError> {
+        // Checked before the empty-input shortcut: a real file and an empty
+        // input under one name is two values, read differently by a
+        // last-wins reader (D-137).
+        if slot.0 {
+            return Err(ValueError::Duplicate);
+        }
+        slot.0 = true;
         let data = match file {
             FileValue::Buffered(part) => {
                 let name = part.filename();
@@ -148,14 +156,11 @@ impl FromField for FileData {
                 FileData::new(bytes, filename, content_type)
             }
         };
-        if slot.is_some() {
-            return Err(ValueError::Duplicate);
-        }
-        *slot = Some(data);
+        slot.1 = Some(data);
         Ok(())
     }
 
     fn finish(slot: Self::Slot) -> Result<Self, ValueError> {
-        slot.ok_or(ValueError::Missing)
+        slot.1.ok_or(ValueError::Missing)
     }
 }

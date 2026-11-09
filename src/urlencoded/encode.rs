@@ -161,10 +161,20 @@ mod owned {
     ///     .append_pairs([("page", "2"), ("sort", "new")]);
     /// assert_eq!(url, "https://example.com/search?q=rust+forms&page=2&sort=new");
     /// ```
-    #[derive(Debug)]
     pub struct Serializer<'s> {
         out: &'s mut String,
         first: bool,
+    }
+
+    /// Shows how much was written, never what: the output holds every
+    /// value (T-30).
+    impl core::fmt::Debug for Serializer<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("Serializer")
+                .field("len", &self.out.len())
+                .field("first", &self.first)
+                .finish()
+        }
     }
 
     impl<'s> Serializer<'s> {

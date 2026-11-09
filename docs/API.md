@@ -1,7 +1,7 @@
 # form-net - API Reference
 
 > Reference for every public item in `form-net`: signature, behaviour, the errors each item can return, cost, and examples.
-> **Current release: `0.9.0` (beta).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.9.1` (beta, the first freeze candidate).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -246,9 +246,9 @@ Reads a request's `Content-Type` value and says which form encoding it is. It is
 
 **Behaviour**
 
-- The value is parsed with parse-net's media-type grammar (RFC 9110 section 8.3.1). Type and subtype compare ASCII case-insensitively; repeated parameters are refused.
+- The value is parsed with parse-net's media-type grammar (RFC 9110 section 8.3.1). Type and subtype compare ASCII case-insensitively; repeated parameters are refused, and so are an empty parameter (`;;`, which RFC 9110 allows and Go's reader refuses) and an extended parameter such as `boundary*` (which Go's reader prefers to `boundary`), D-136.
 - `application/x-www-form-urlencoded` gives `Urlencoded`. Its parameters are ignored, except a `charset` that is not `utf-8` or `us-ascii` (ASCII case-insensitive, quoted or not), which is refused.
-- `multipart/form-data` gives `Multipart` with the validated boundary: exactly one `boundary` parameter, token or quoted, 1 to 70 bytes of RFC 2046 `bchars`, not ending in a space.
+- `multipart/form-data` gives `Multipart` with the validated boundary: exactly one `boundary` parameter, token or quoted, 1 to 70 bytes of RFC 2046 `bchars`, not ending in a space, and not starting or ending with `'` (readers that take single quotes as quoting strip them, D-136).
 - Anything else, including `text/plain`, `multipart/mixed`, and `application/json`, is `UnsupportedMediaType`. `text/plain` form bodies are not machine-readable by the HTML standard's own account and are never parsed.
 
 **Errors**
@@ -256,10 +256,10 @@ Reads a request's `Content-Type` value and says which form encoding it is. It is
 | Error | When |
 |---|---|
 | `UnsupportedMediaType` | any other media type, or an empty value |
-| `Syntax { InvalidContentType }` | parse-net refuses the value (bad token, trailing bytes), or a parameter other than `boundary` is repeated |
+| `Syntax { InvalidContentType }` | parse-net refuses the value (bad token, trailing bytes), a parameter other than `boundary` is repeated, a parameter is empty, or a parameter name other than `boundary*...` has `*` |
 | `Syntax { MissingBoundary }` | `multipart/form-data` without `boundary` |
 | `Syntax { DuplicateBoundary }` | two `boundary` parameters, whatever their values (form-net reads the parameters itself, so this is never reported as a generic repeated parameter) |
-| `Syntax { InvalidBoundary }` | empty, longer than 70 bytes, a byte outside `bchars`, or a trailing space |
+| `Syntax { InvalidBoundary }` | empty, longer than 70 bytes, a byte outside `bchars`, a trailing space, a leading or trailing `'`, or an extended `boundary*` parameter |
 | `Encoding { UnsupportedCharset }` | a urlencoded `charset` other than UTF-8 or US-ASCII |
 
 **Cost:** 114 ns for a browser value (`multipart/form-data; boundary=----WebKitFormBoundary` plus 16 characters), no allocation; the time is parse-net's strict media-type grammar (measured; `docs/PERFORMANCE.md`).
@@ -888,7 +888,7 @@ The framing rules (RFC 2046 section 5.1.1 and RFC 7578), with form-net's strict 
 | after the close delimiter | at most `max_epilogue_bytes` more, counted in constant time per chunk and discarded |
 | end of input before the close delimiter | `Truncated` |
 | part headers | `name ":" OWS value OWS CRLF`; no whitespace before the colon, no folding, no control bytes except HTAB; bytes 0x80 to 0xFF allowed in values (browsers send raw UTF-8 file names) |
-| `Content-Disposition` | exactly once; type `form-data`; `name` exactly once and not empty; `filename` at most once; no repeated parameter; unknown parameters ignored, except that a parameter name with `*` other than `filename*` (RFC 2231 continuations, `name*`) a backslash in `name`, an unquoted `name` or `filename` that starts or ends with `'` (some readers strip single quotes, D-114), and `name`, `filename`, or `filename*` written other than in lower case (some readers match them exactly, D-116) are refused as `MalformedParameter`; at most 16 parameters (more is `MalformedParameter`); a quoted value containing `\"` refused (browsers never backslash-escape, so the RFC 9110 and HTML readings disagree only there) |
+| `Content-Disposition` | exactly once; type `form-data`; `name` exactly once and not empty; `filename` at most once; no repeated parameter; unknown parameters ignored, except that a parameter name with `*` other than `filename*` (RFC 2231 continuations, `name*`) a backslash in `name`, an unquoted `name` or `filename` that starts or ends with `'` (some readers strip single quotes, D-114), and `name`, `filename`, or `filename*` written other than in lower case (some readers match them exactly, D-116) are refused as `MalformedParameter`; at most 16 parameters (more is `MalformedParameter`); an empty parameter (`;;`), and any parameter value that holds `name=` in any case (readers that find parameters by substring search, multer 3.1 among them, read another name there), are `MalformedParameter` (D-136); a quoted value containing `\"` refused (browsers never backslash-escape, so the RFC 9110 and HTML readings disagree only there) |
 | `filename*` | refused by default; see [`ExtendedFilenamePolicy`](#extendedfilenamepolicy) |
 | part `Content-Type` | at most once; parsed; `multipart/*` refused (no nested multipart) |
 | `Content-Transfer-Encoding` | absent, `7bit`, `8bit`, or `binary` (any case); anything else refused |
@@ -1383,7 +1383,7 @@ What a `filename*` parameter (RFC 8187) in a part's `Content-Disposition` means.
 |---|---|
 | `Refuse` (default) | any `filename*` is refused (`Policy { ExtendedFilename }`) |
 | `AcceptAlone` | accepted and decoded (UTF-8 only, at most `max_filename_bytes` decoded) when it is the only file name parameter; `FileName::source` is `Extended` |
-| `Ignore` | the parameter is dropped; a part with only `filename*` is then a text field |
+| `Ignore` | the parameter is dropped; a part with only `filename*` is then a text field. An inspection layer that reads RFC 2231 sees a file there, so a route behind one keeps `Refuse` |
 
 A part with both `filename` and `filename*` is refused under every policy (`Policy { BothFilenames }`): which name wins is exactly where readers disagree. A malformed `filename*` is `Encoding { InvalidExtendedValue }` under `AcceptAlone`.
 
@@ -1578,6 +1578,8 @@ Verifies the anti-forgery token the moment its field ends, before any later part
 - The token field stays in the result; leave it out of a typed form with `ignore`.
 - Works for both encodings, alone or as one half of a pair: `(customs, check)`.
 - With `TokenField::anywhere`, where files may come before the token, verify `captured_token` after the parse instead: the check always wants the token first.
+- One `TokenCheck` per request: it has no reset, and an instance kept across requests stays verified.
+- After a parse, read `verified` only when the parse returned `Ok`: a refusal later in the body (a second token, for one) leaves it `true`.
 
 ```rust
 use form_net::{Limits, Policy, Refusal, TokenCheck};
@@ -2113,7 +2115,7 @@ A pull-style blocking API, synchronous and free of any runtime: ask for the next
 
 - The head is copied once per part into an `OwnedPartHead` (the header buffer is reused for the next part, so it cannot be borrowed across reads); `view` gives the usual `PartHead`.
 - `text` reads the rest of a part into a `String`, bounded by `max_value_bytes` (for a file part too), and checks it as text. `skip` discards the rest of the part and returns its length. `save` streams a file part into a store.
-- Dropping a `PartReader` before its end skips the rest of the part at the next `next_part` call. `next_part` returns `Ok(None)` after the close delimiter.
+- Dropping a `PartReader` before its end skips the rest of the part at the next `next_part` call. `next_part` returns `Ok(None)` after the close delimiter, once it has read the rest of the body: that is epilogue and counts against `max_epilogue_bytes` and `max_body_bytes`, as in `parse_multipart` (D-142).
 - `Read for PartReader` reports a parse error as `std::io::Error` with kind `InvalidData` and the `FormError` as its source.
 
 **Errors:** every multipart error; `Io { kind }` from the reader.
@@ -2175,6 +2177,7 @@ let signup = Signup::from_body(content_type, body)?;
 - Expands to the struct exactly as written (attributes, doc comments, and visibility passed through), a hidden builder with one slot per field and the struct's own visibility (so a private form at module level compiles, D-121), and `impl FromForm`. The struct may not be generic and must have named fields.
 - The wire name of a field is its Rust name; `= "wire-name"` after the type overrides it (for names that are not Rust identifiers, such as `display-name` or `tags[]`). Bracket names are plain names: `tags[]` is matched byte for byte, never expanded into a structure.
 - The optional `ignore = [ ... ];` after the struct lists names that are accepted and dropped: the anti-forgery field and `_charset_` are the usual ones. An ignored name may appear any number of times. Every other name the struct does not declare is refused (`Extract { Unknown }`).
+- Two fields with one wire name, or a field whose wire name is also ignored, do not compile: the second could never receive a value (D-138).
 - Field types implement [`FromField`](#fromfield-valueerror); the shipped types are listed under [Value rules](#value-rules).
 - Matching a name is a length switch plus byte comparisons, which the compiler builds from the macro's comparisons: no hash map, no allocation beyond what the field types own.
 
@@ -2389,7 +2392,7 @@ The `FromField` implementations that ship (FR-58, FR-59):
 | `FileData` | files only; an empty file input counts as missing | `Missing` |
 | `StoredFile` | files only (`Buffered` parts are copied into a memory-held file); an empty file input counts as missing | `Missing` |
 
-Text given to a file field is `ExpectedFile`, and a file given to a text field is `ExpectedText`; both surface as `Extract { WrongKind }`. A scalar given twice is `Duplicate` for every type except `Vec`.
+Text given to a file field is `ExpectedFile`, and a file given to a text field is `ExpectedText`; both surface as `Extract { WrongKind }`. A scalar given twice is `Duplicate` for every type except `Vec`. For `FileData` and `StoredFile` an empty file input counts: a file and an empty input under one name is `Duplicate` (a last-wins reader sees no file there), D-137; their slot is `(bool, Option<T>)`, whether the field arrived and the file.
 
 ### `Secret`
 
@@ -2472,7 +2475,7 @@ Writes a `multipart/form-data` body as browsers do (FR-64 to FR-66).
 - With a caller boundary, every data chunk goes through the same streaming matcher the parser uses, across chunk splits, and data that contains the delimiter is refused (`Syntax { BoundaryInContent }`). With a generated boundary the scan is skipped (128 random bits make a collision negligible) unless `verify_boundary(true)` is set.
 - `file_data` outside a file part, or any call after an error, is `Poisoned`. A refusal of a head writes nothing of that part; a `BoundaryInContent` or `Io` error can come after part of the data was written, so after any error the output is incomplete and must be discarded.
 
-**Errors:** `Syntax { BoundaryInContent | ControlInHeader | EmptyName | AmbiguousQuote | InvalidContentType }`; `Encoding { UnsupportedCharset }`; `Io { kind }` from the writer; `Random` from `new`; `Poisoned`.
+**Errors:** `Syntax { BoundaryInContent | ControlInHeader | EmptyName | AmbiguousQuote | InvalidContentType | MalformedParameter }` (the last for a name or file name that holds `name=`, which the parser refuses, D-136); `Encoding { UnsupportedCharset }`; `Io { kind }` from the writer; `Random` from `new`; `Poisoned`.
 
 **Cost:** writes go straight to `out`; head encoding 72 to 85 ns per file part; the boundary scan under 0.1 ns per byte when on (measured; `docs/PERFORMANCE.md`).
 
@@ -2520,7 +2523,7 @@ pub fn encode_part_head(
 
 Writes one part's head into a caller buffer without allocating: the delimiter (with its leading CRLF unless `first`), the `Content-Disposition` line with browser escaping, the optional `Content-Type` line, and the blank line. Returns the bytes written. After the last part's data the caller writes the close delimiter: `boundary.delimiter()` (`\r\n--` and the boundary) followed by `--\r\n`; for a body with no parts, `--`, the boundary, and `--\r\n`.
 
-**Errors:** `BufferTooSmall { needed }`; `Syntax { ControlInHeader | AmbiguousQuote | InvalidContentType }`.
+**Errors:** `BufferTooSmall { needed }`; `Syntax { ControlInHeader | AmbiguousQuote | InvalidContentType | MalformedParameter }`.
 
 ```rust
 let b = form_net::Boundary::new(b"X")?;

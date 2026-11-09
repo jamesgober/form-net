@@ -88,6 +88,15 @@ impl Boundary {
         if boundary.last() == Some(&b' ') {
             return Err(invalid(boundary.len().wrapping_sub(1)));
         }
+        if boundary.first() == Some(&b'\'') {
+            // `boundary='abc'` is the boundary `'abc'` to RFC 2046 readers and
+            // `abc` to readers that take single quotes as quoting; the same
+            // reasoning as D-114 for part names (D-136).
+            return Err(invalid(0));
+        }
+        if boundary.last() == Some(&b'\'') {
+            return Err(invalid(boundary.len().wrapping_sub(1)));
+        }
         let mut delimiter = [0u8; MAX_DELIMITER_LEN];
         let len = boundary.len().wrapping_add(4);
         if let Some(head) = delimiter.get_mut(..4) {

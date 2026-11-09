@@ -170,6 +170,10 @@ One number depends on the build. `pairs` on 1 MiB of escapes reads 332 µs in 0.
 
 ---
 
+## What 0.9.1 changes
+
+The review's refusals (D-136) add about 30 ns to `FormKind::detect`, once per request (173 to 184 ns before, 200 to 213 ns after, alternated on the loaded machine). Every multipart row stays level within the run-to-run spread; the checks run in full only when a fast byte search finds a `*`, a second `;`, or an `=`.
+
 ## What 0.9 changes
 
 The polish pass (D-112) reran every family against the competitors at their current versions (unchanged since 0.7: multer 3.1.0, multipart 0.18.0, form_urlencoded 1.2.2, serde_urlencoded 0.7.1, serde_qs 1.1.3). Every family passes; allocation counts are the same, call for call. Six ratios read lower than the quiet 0.7.0 baseline. Four are within the spread of the five runs. The other two were measured against 0.8.0 on the same loaded machine, alternating the two builds four times (D-133):

@@ -735,6 +735,40 @@ pub fn __push_field_error(
     }
 }
 
+/// Whether two of `names` are equal, byte for byte: `form!` refuses to
+/// compile a struct whose second field of a name could never receive a
+/// value (D-138). Quadratic, at compile time only. Not part of the API.
+#[doc(hidden)]
+#[must_use]
+pub const fn __repeated_wire_name(mut names: &[&str]) -> bool {
+    while let [first, rest @ ..] = names {
+        let mut others = rest;
+        while let [other, tail @ ..] = others {
+            if bytes_equal(first.as_bytes(), other.as_bytes()) {
+                return true;
+            }
+            others = tail;
+        }
+        names = rest;
+    }
+    false
+}
+
+/// `a == b` in a const context.
+const fn bytes_equal(mut a: &[u8], mut b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    while let ([x, ra @ ..], [y, rb @ ..]) = (a, b) {
+        if *x != *y {
+            return false;
+        }
+        a = ra;
+        b = rb;
+    }
+    true
+}
+
 /// The error for a name the struct does not declare. Not part of the API.
 #[doc(hidden)]
 #[must_use]

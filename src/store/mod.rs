@@ -576,12 +576,18 @@ impl Sink for StoreSink {
                 drop(file);
                 sub(&self.shared.counters.files_on_disk, 1);
                 sub(&self.shared.counters.bytes_on_disk, cur.on_disk);
-                if let Some(budget) = &self.budget {
-                    budget.release(cur.on_disk);
-                }
+                let mut freed = true;
                 if let Some(p) = path {
                     if std::fs::remove_file(&p).is_err() {
+                        freed = false;
                         self.shared.cleanup_failed();
+                    }
+                }
+                // As `StoredFile`'s drop: only space that is free again goes
+                // back to the budget (D-101, D-143).
+                if freed {
+                    if let Some(budget) = &self.budget {
+                        budget.release(cur.on_disk);
                     }
                 }
             }
@@ -1188,7 +1194,15 @@ impl Upload {
         store: &Store,
         inspector: &mut I,
     ) -> Result<Upload, FormError> {
-        let mut session = UploadSession::new(content_type, limits, policy, store)?;
+        // `failed` on every failed parse, setup included, as the buffered
+        // entry points call it (D-043, D-144).
+        let mut session = match UploadSession::new(content_type, limits, policy, store) {
+            Ok(s) => s,
+            Err(e) => {
+                inspector.failed(&e);
+                return Err(e);
+            }
+        };
         let mut buf = crate::wipe::ReadBuf::new(64 * 1024);
         loop {
             let n = match reader.read(&mut buf.buf) {
@@ -1475,12 +1489,18 @@ const fn is_default_ignorable(c: char) -> bool {
 }
 
 impl crate::FromField for StoredFile {
-    type Slot = Option<StoredFile>;
+    /// Whether the field arrived (an empty file input counts), and the file.
+    type Slot = (bool, Option<StoredFile>);
 
     fn accept_file(
         slot: &mut Self::Slot,
         file: crate::FileValue<'_>,
     ) -> Result<(), crate::ValueError> {
+        // Before the empty-input shortcut, as for `FileData` (D-137).
+        if slot.0 {
+            return Err(crate::ValueError::Duplicate);
+        }
+        slot.0 = true;
         let stored = match file {
             crate::FileValue::Stored(f) => f,
             crate::FileValue::Buffered(part) => StoredFile::detached(
@@ -1494,14 +1514,11 @@ impl crate::FromField for StoredFile {
             // A file input left empty: as if it were absent.
             return Ok(());
         }
-        if slot.is_some() {
-            return Err(crate::ValueError::Duplicate);
-        }
-        *slot = Some(stored);
+        slot.1 = Some(stored);
         Ok(())
     }
 
     fn finish(slot: Self::Slot) -> Result<Self, crate::ValueError> {
-        slot.ok_or(crate::ValueError::Missing)
+        slot.1.ok_or(crate::ValueError::Missing)
     }
 }

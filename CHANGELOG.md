@@ -13,6 +13,45 @@
 
 ---
 
+## [0.9.1] - 2026-11-09
+
+Review: the first freeze candidate. The 0.9.x adversarial review found
+18 defects, one high; each is fixed against its failing test.
+
+### Added
+
+- `docs/STABILITY-1.0.md`, the draft 1.0 contract.
+
+### Changed
+
+- `FileData` and `StoredFile`: a file and an empty file input under one
+  name is `Duplicate`; their `FromField::Slot` is `(bool, Option<T>)`
+  (D-137).
+- `form!` does not compile two fields with one wire name, or a field
+  that is also ignored (D-138).
+- `MultipartReader::next_part` reads the epilogue before it returns
+  `None`, so its budget holds (D-142).
+
+### Fixed
+
+- `boundary*` beside `boundary` was accepted and ignored; Go frames the
+  body with the starred value. Any starred request parameter, an empty
+  parameter, a parameter value holding `name=`, and a boundary in single
+  quotes are refused (D-136).
+- A `part_end` refusal closed the sink instead of aborting it (D-139).
+- The driver's copy of a part head could pass `memory_bound` (D-140).
+- A second `_charset_` field read differently by the buffered parser,
+  `UploadSession`, and `PartReader::text` (D-141).
+- An aborted spill gave its bytes back to the quota when the delete
+  failed (D-143).
+- `Upload::parse_with` did not call `Inspector::failed` on a setup
+  error (D-144).
+- The error a body with two errors reports no longer depends on the
+  split (D-145).
+- `Pairs` and `Serializer` `Debug` showed the body (D-146).
+
+---
+
 ## [0.9.0] - 2026-11-08
 
 Polish: every accepted gap, deferred item, and missed target tried again,
@@ -361,7 +400,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/jamesgober/form-net/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/jamesgober/form-net/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/form-net/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/form-net/compare/v0.6.0...v0.7.0
