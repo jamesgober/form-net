@@ -367,7 +367,9 @@ pub(crate) fn read_block(
                 }
                 Some((Text::Area(decoded.len() as u32), FileNameSource::Extended))
             }
-            ExtendedFilenamePolicy::Ignore => None,
+            // `Refuse`, and `Ignore` since 0.9.2: a part with only
+            // `filename*` is a file to RFC 2231 readers, so dropping the
+            // parameter would make it a field to form-net (D-147).
             _ => return Err(FormError::policy(PolicyRefusal::ExtendedFilename, at)),
         },
         (None, None) => None,
@@ -600,8 +602,16 @@ mod tests {
         let accept = Policy::DEFAULT.with_extended_filename(ExtendedFilenamePolicy::AcceptAlone);
         let f = read(ext, &accept).unwrap();
         assert_eq!(f.filename, Some((Text::Area(7), FileNameSource::Extended)));
+        #[allow(deprecated)]
         let ignore = Policy::DEFAULT.with_extended_filename(ExtendedFilenamePolicy::Ignore);
-        assert_eq!(read(ext, &ignore).unwrap().kind, PartKind::Field);
+        // Refused as under `Refuse` since 0.9.2 (D-147).
+        assert!(matches!(
+            read(ext, &ignore),
+            Err(FormError::Policy {
+                reason: PolicyRefusal::ExtendedFilename,
+                ..
+            })
+        ));
         let both =
             b"Content-Disposition: form-data; name=f; filename=a; filename*=UTF-8''b\r\n\r\n";
         for p in [Policy::DEFAULT, accept, ignore] {

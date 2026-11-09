@@ -13,6 +13,20 @@
 
 ---
 
+## [0.9.2] - 2026-11-09
+
+A freeze candidate: the one review finding left for a decision.
+
+### Changed
+
+- Under `ExtendedFilenamePolicy::Ignore`, a part with only `filename*`
+  is refused (`Policy { ExtendedFilename }`), as under `Refuse`. It was
+  a text field to form-net and a file to RFC 2231 readers. A part with
+  both file names was already refused under every policy, so `Ignore`
+  now behaves as `Refuse` and is deprecated (D-147, amends D-014).
+
+---
+
 ## [0.9.1] - 2026-11-09
 
 Review: the first freeze candidate. The 0.9.x adversarial review found
@@ -400,7 +414,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/jamesgober/form-net/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/jamesgober/form-net/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/jamesgober/form-net/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/form-net/compare/v0.7.0...v0.8.0
