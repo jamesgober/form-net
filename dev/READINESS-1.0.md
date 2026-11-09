@@ -10,7 +10,7 @@ For James: everything still open after the 0.9 polish pass (D-112), with its num
 
 | Item | Where it stands | Recommendation |
 |---|---|---|
-| The deployment test: web-net running the login and upload routes on form-net with the real customs-sec, for two weeks (the v0.9.x exit, D-125) | web-net and customs-sec are 0.1.0 scaffolds. `tests/alpha_routes.rs` is the contract their routes must keep, with csrf-sec's real tokens and a customs test double | Keep 1.0 behind it. It is the only test of the API by a real caller; the freeze should not come before it |
+| The deployment test: web-net running the login and upload routes on form-net with the real customs-sec, for two weeks (the v0.9.x exit, D-125) | web-net now runs both routes on 0.9.0 with csrf-sec's real tokens, with no API change (D-134). customs-sec is still a test double, and nothing is deployed yet | Keep 1.0 behind it. It is the only test of the API by a real caller; the freeze should not come before it. What it needs from you: where and when the first site is deployed |
 | The 25-byte search query `q=rust+form+parser&page=2` through `pairs` is level with form_urlencoded: 0.94x collecting, 1.05x iterating (bar 1.20x) | You accepted it as level at 0.6 (D-111). Both crates spend the time on the one owned string that `+` decoding needs; form-net checks more on top. `raw_pairs` + `decode_into` on the same input is now 1.55x (1.32x to 1.69x over five runs) | Accept for 1.0. Closing it means a different return type (a small-string type instead of `Cow<str>`), which is an API change for one input shape |
 
 ## Stands, with a reason (no decision needed)
@@ -40,7 +40,6 @@ For James: everything still open after the 0.9 polish pass (D-112), with its num
 - The deployment test above.
 - The adversarial review (DIRECTIVES, definition of done item 10).
 - `docs/STABILITY-1.0.md`, the full audit.
-- The defence idea in PLAN 14 row 0.9: refusing part header bytes at or above 0x80 outside `filename`, checked against the browser corpus.
 
 ## After 1.0
 

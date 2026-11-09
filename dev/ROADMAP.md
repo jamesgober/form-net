@@ -127,11 +127,14 @@ Exit: every item accepted, deferred, or missed earlier in the series has been tr
 Exit: one release candidate with no change for two weeks of use by web-net and customs-sec.
 
 - [ ] From 0.8 (D-125): web-net runs the login and upload routes on form-net end to end, customs-sec as the `Inspector`, csrf-sec on the captured token, in a test deployment; `tests/alpha_routes.rs` is the contract. Findings fixed test-first; an API change it needs is made before the freeze.
+  - [x] web-net runs both routes on 0.9.0 with csrf-sec through `TokenCheck`, with no API change (D-134; web-net `tests/actions.rs`, `examples/site.rs`).
+  - [ ] customs-sec as the `Inspector` (a test double today).
+  - [ ] Two weeks on a deployed site (James).
 - [ ] API freeze candidates `0.9.x`; fixes only.
 - [ ] Absolute times measured again on a quiet machine, against `benches/baseline/2026-10-30`; the 0.9.0 pass could only measure ratios reliably (the machine stayed at 100% load).
 - [ ] Adversarial review (DIRECTIVES definition of done, item 10) with every finding fixed test-first.
 - [ ] `docs/STABILITY-1.0.md` drafted.
-- [ ] Defence idea: high-byte refusal outside `filename` checked against the browser corpus (PLAN 14).
+- [x] Defence idea: high-byte refusal outside `filename` checked against the browser corpus (PLAN 14): refuted, every browser sends UTF-8 field names; no new refusal (D-135).
 
 ## v1.0.0 - Stable
 
