@@ -13,6 +13,8 @@ For James: everything still open after the 0.9 polish pass (D-112), with its num
 | The deployment test: web-net running the login and upload routes on form-net with the real customs-sec, for two weeks (the v0.9.x exit, D-125) | web-net now runs both routes on 0.9.0 with csrf-sec's real tokens, with no API change (D-134). customs-sec is still a test double, and nothing is deployed yet | Keep 1.0 behind it. It is the only test of the API by a real caller; the freeze should not come before it. What it needs from you: where and when the first site is deployed |
 | The 25-byte search query `q=rust+form+parser&page=2` through `pairs` is level with form_urlencoded: 0.94x collecting, 1.05x iterating (bar 1.20x) | You accepted it as level at 0.6 (D-111). Both crates spend the time on the one owned string that `+` decoding needs; form-net checks more on top. `raw_pairs` + `decode_into` on the same input is now 1.55x (1.32x to 1.69x over five runs) | Accept for 1.0. Closing it means a different return type (a small-string type instead of `Cow<str>`), which is an API change for one input shape |
 
+| Under the opt-in `ExtendedFilenamePolicy::Ignore`, a part with only `filename*` is a text field, where an RFC 2231 reader (Go, an inspection layer) sees a file | Found in the 0.9.x adversarial review. The default is `Refuse`, and `docs/API.md` tells a route behind such a reader to keep it. `Ignore` is your decision (D-014) | Refuse a part with only `filename*` under `Ignore` too, so the policy drops the parameter only where a plain `filename` still makes it a file. No browser sends `filename*` |
+
 ## Stands, with a reason (no decision needed)
 
 | Item | Numbers | Why it stands |
@@ -32,14 +34,14 @@ For James: everything still open after the 0.9 polish pass (D-112), with its num
 | A backslash in a part name, which browsers send as is, is refused | | Accepted deviation (D-082) |
 | `RefusalDigest` is not built on targets without atomic adds (thumbv6m) | | Those targets have no atomic add; everything else in form-net builds there (D-123) |
 | The security audit job works around RUSTSEC-2026-0385 | | `ctutils` comes in through crypt-io's optional dependencies under the 1.85 MSRV (D-091); a crypt-io change |
+| Which of two errors a body reports can depend on the split when a budget runs out inside the bytes of a bare break run (at most the delimiter length) | | Both are refusals of the same body; closing it needs the parser to hold back unconsumed bytes, a contract change for every caller (D-145) |
 | Platform gaps: Windows ACLs are inherited from the per-user temporary directory; free disk space is not queried (a configured budget is used); Linux `O_TMPFILE` is not used | | Each needs `unsafe` or a third-party crate, which the rules forbid (PLAN 9, D-059, PLAN 14) |
 
 ## Left for 0.9.x, before the freeze
 
 - Absolute times on a quiet machine: the 0.9.0 baseline ran at 100% load, so its absolute times read about 1.5x high; its ratios hold. The 0.7.0 quiet numbers stay the absolute reference until then.
 - The deployment test above.
-- The adversarial review (DIRECTIVES, definition of done item 10).
-- `docs/STABILITY-1.0.md`, the full audit.
+- `docs/STABILITY-1.0.md`: drafted in 0.9.1; its reading contract is for you to approve with 1.0, and its audit table fills in as the items above close.
 
 ## After 1.0
 

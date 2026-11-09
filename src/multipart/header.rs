@@ -4,7 +4,9 @@
 use parse_net::{ExtValue, Params, Word};
 
 use crate::error::{EncodingError, FormError, Limit, Location, PolicyRefusal, SyntaxError};
-use crate::kind::{HEADER_LIMITS, repeated_name, word_raw};
+use crate::kind::{
+    HEADER_LIMITS, has_empty_parameter, holds_name_assignment, repeated_name, word_raw,
+};
 use crate::limits::{ExtendedFilenamePolicy, HeaderPolicy, Limits, Policy};
 use crate::multipart::filename::{FileNameSource, has_html_escape, html_unescape};
 use crate::multipart::parser::{Charset, PartKind};
@@ -121,10 +123,14 @@ fn is(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Reads parameters after a value's leading token, with form-net's rules:
-/// no repeated name, no `\"` in a quoted value, nothing after them.
+/// no repeated name, no `\"` in a quoted value, no empty parameter (D-136),
+/// nothing after them.
 fn params(rest: &[u8], at: Location, bad: SyntaxError) -> Result<Params<'_>, FormError> {
     if has_escaped_quote(rest) {
         return Err(FormError::syntax(SyntaxError::AmbiguousQuote, at));
+    }
+    if has_empty_parameter(rest) {
+        return Err(FormError::syntax(bad, at));
     }
     let (p, used) =
         parse_net::param::parse(rest, &HEADER_LIMITS).map_err(|_| FormError::syntax(bad, at))?;
@@ -210,6 +216,9 @@ pub(crate) fn read_block(
             if has_escaped_quote(ct) {
                 return Err(FormError::syntax(SyntaxError::AmbiguousQuote, at));
             }
+            if has_empty_parameter(ct) {
+                return Err(FormError::syntax(SyntaxError::InvalidContentType, at));
+            }
             let mt = parse_net::media::parse(ct, &HEADER_LIMITS)
                 .map_err(|_| FormError::syntax(SyntaxError::InvalidContentType, at))?;
             let p = mt.params();
@@ -255,6 +264,12 @@ pub(crate) fn read_block(
     let mut filename = None;
     let mut filename_ext = None;
     for q in p.iter() {
+        if holds_name_assignment(word_raw(&q.value)) {
+            // `x="y;name=evil;"`, `filename="x; name=role;"`: readers that
+            // find parameters by substring search read another name, or a
+            // file where this is a field (D-136).
+            return Err(FormError::syntax(SyntaxError::MalformedParameter, at));
+        }
         let known = is(q.name, b"name") || is(q.name, b"filename") || is(q.name, b"filename*");
         if known && q.name.iter().any(u8::is_ascii_uppercase) {
             // `NAME=` is `name` to RFC 7578 readers and an unknown parameter

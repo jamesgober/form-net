@@ -28,6 +28,53 @@ pub(crate) fn repeated_name<'a>(params: &Params<'a>) -> Option<&'a [u8]> {
     None
 }
 
+/// Whether a header value has an empty parameter: `;` then optional
+/// whitespace then `;`, outside a quoted string. RFC 9110 allows it; Go's
+/// `mime.ParseMediaType` refuses the whole parameter list, so a Go reader in
+/// front sees no boundary, or a part with no name, where form-net reads one
+/// (D-136). A single trailing `;` is read the same by both and stays.
+pub(crate) fn has_empty_parameter(s: &[u8]) -> bool {
+    // Two `;` at least, or there is nothing to find: a browser's header has
+    // one or two, and the count is a single fast pass.
+    if s.iter().filter(|&&b| b == b';').count() < 2 {
+        return false;
+    }
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut after_semicolon = false;
+    for &b in s {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                quoted = false;
+            }
+            continue;
+        }
+        match b {
+            b';' if after_semicolon => return true,
+            b';' => after_semicolon = true,
+            b' ' | b'\t' => {}
+            b'"' => {
+                quoted = true;
+                after_semicolon = false;
+            }
+            _ => after_semicolon = false,
+        }
+    }
+    false
+}
+
+/// Whether a parameter value holds `name=` in any ASCII case. Readers that
+/// find `name=` and `filename=` by substring search (multer 3.1, the reader
+/// behind axum) take it for the parameter itself and read another field
+/// name, or a file where form-net reads a field (D-136).
+pub(crate) fn holds_name_assignment(value: &[u8]) -> bool {
+    value.contains(&b'=') && value.windows(5).any(|w| w.eq_ignore_ascii_case(b"name="))
+}
+
 /// The bytes of a parameter value as sent: a token, or the content of a
 /// quoted string with backslashes kept literal.
 pub(crate) const fn word_raw<'a>(w: &Word<'a>) -> &'a [u8] {
@@ -69,8 +116,9 @@ impl FormKind {
     /// `application/x-www-form-urlencoded` is accepted with any parameters
     /// except a `charset` other than UTF-8 or US-ASCII. `multipart/form-data`
     /// needs exactly one valid `boundary`. Everything else, including
-    /// `text/plain`, is `UnsupportedMediaType`. A repeated parameter is
-    /// refused.
+    /// `text/plain`, is `UnsupportedMediaType`. A repeated parameter, an
+    /// empty parameter (`;;`), and an extended parameter (`boundary*`,
+    /// `charset*0`) are refused (D-136).
     ///
     /// # Errors
     ///
@@ -102,6 +150,33 @@ impl FormKind {
             return Err(FormError::UnsupportedMediaType);
         }
         let params = mt.params();
+        if has_empty_parameter(content_type) {
+            return Err(FormError::syntax(
+                SyntaxError::InvalidContentType,
+                Location::at(0),
+            ));
+        }
+        // `*` is in no browser's header: the fast byte search keeps the
+        // parameter walk off the common path.
+        if let Some(p) = content_type
+            .contains(&b'*')
+            .then(|| params.iter().find(|p| p.name.contains(&b'*')))
+            .flatten()
+        {
+            // `boundary*=UTF-8''Y` beside `boundary=X`: Go's
+            // `mime.ParseMediaType` frames the body with Y, form-net would
+            // with X (D-136). The same reasoning as D-081 for part headers.
+            let reason = if p.name.len() >= 8
+                && p.name
+                    .get(..8)
+                    .is_some_and(|n| n.eq_ignore_ascii_case(b"boundary"))
+            {
+                SyntaxError::InvalidBoundary
+            } else {
+                SyntaxError::InvalidContentType
+            };
+            return Err(FormError::syntax(reason, Location::at(0)));
+        }
         if let Some(name) = repeated_name(&params) {
             let reason = if name.eq_ignore_ascii_case(b"boundary") {
                 SyntaxError::DuplicateBoundary

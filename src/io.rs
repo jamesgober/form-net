@@ -9,7 +9,7 @@ use std::io::{self, Read};
 use crate::error::{EncodingError, FormError, Location};
 use crate::limits::{Limits, Policy};
 use crate::multipart::owned_head::OwnedPartHead;
-use crate::multipart::parser::{Charset, Event, MultipartParser, PartSummary};
+use crate::multipart::parser::{Event, MultipartParser, PartSummary};
 
 const READ_BUFFER: usize = 64 * 1024;
 
@@ -54,7 +54,10 @@ pub struct MultipartReader<R: Read> {
     in_part: bool,
     last: Option<PartSummary>,
     done: bool,
-    declared: Option<Vec<u8>>,
+    /// Whether the `_charset_` value declared before the current part
+    /// lets its text be read: the parser's record, read before the part
+    /// started, as every other entry point reads it (D-128, D-141).
+    declared_ok: bool,
     /// Bytes `save` has put on disk for this request.
     #[cfg(feature = "fs")]
     disk_used: u64,
@@ -64,9 +67,6 @@ impl<R: Read> Drop for MultipartReader<R> {
     fn drop(&mut self) {
         crate::wipe::wipe(self.buf.get_mut(..self.buf_used).unwrap_or(&mut []));
         crate::wipe::wipe_vec(&mut self.pending);
-        if let Some(d) = self.declared.as_mut() {
-            crate::wipe::wipe_vec(d);
-        }
     }
 }
 
@@ -124,7 +124,7 @@ impl<R: Read> MultipartReader<R> {
             in_part: false,
             last: None,
             done: false,
-            declared: None,
+            declared_ok: true,
             #[cfg(feature = "fs")]
             disk_used: 0,
         })
@@ -171,11 +171,16 @@ impl<R: Read> MultipartReader<R> {
         loop {
             self.fill()?;
             let input = self.buf.get(self.start..self.end).unwrap_or(&[]);
+            // Before `parse`: a `_charset_` part starting in this step resets
+            // the parser's record.
+            let declared_ok =
+                crate::multipart::parser::declared_readable(self.parser.declared_charset());
             let step = self.parser.parse(input, self.eof)?;
             self.start = self.start.saturating_add(step.consumed);
             match step.event {
                 Event::PartStart(head) => {
                     self.head.copy_from(&head);
+                    self.declared_ok = declared_ok;
                     return Ok(Got::Start);
                 }
                 Event::Data(bytes) => {
@@ -193,7 +198,10 @@ impl<R: Read> MultipartReader<R> {
     }
 
     /// The next part, or `None` after the close delimiter. Skips whatever
-    /// is left of the previous part.
+    /// is left of the previous part. After the close delimiter it reads the
+    /// rest of the body, which is epilogue and counts against
+    /// `max_epilogue_bytes` and `max_body_bytes`, as `parse_multipart`
+    /// counts it (D-142).
     ///
     /// # Errors
     ///
@@ -214,11 +222,32 @@ impl<R: Read> MultipartReader<R> {
                     self.in_part = true;
                     return Ok(Some(PartReader { inner: self }));
                 }
-                Got::Done => self.done = true,
+                Got::Done => {
+                    self.done = true;
+                    self.drain_epilogue()?;
+                }
                 _ => {}
             }
         }
         Ok(None)
+    }
+
+    /// Feeds the parser what follows the close delimiter, to the end of the
+    /// body, so the epilogue and body budgets hold.
+    fn drain_epilogue(&mut self) -> Result<(), FormError> {
+        loop {
+            self.fill()?;
+            // `fill` leaves the buffer empty only at the end of the body.
+            if self.start >= self.end {
+                return Ok(());
+            }
+            let input = self.buf.get(self.start..self.end).unwrap_or(&[]);
+            let step = self.parser.parse(input, self.eof)?;
+            if step.consumed == 0 {
+                return Ok(());
+            }
+            self.start = self.start.saturating_add(step.consumed);
+        }
     }
 
     fn end_part(&mut self, summary: PartSummary) {
@@ -261,7 +290,6 @@ impl<R: Read> PartReader<'_, R> {
     /// `Limit { ValueLength }`.
     pub fn text(&mut self) -> Result<String, FormError> {
         let own = self.inner.head.view().charset();
-        let is_charset = self.inner.head.view().name() == "_charset_";
         let cap = self.inner.parser.limits().value() as usize;
         let mut out = Vec::new();
         let read = (|| {
@@ -287,19 +315,9 @@ impl<R: Read> PartReader<'_, R> {
             Some(self.inner.head.view().index()),
             self.inner.parser.bytes_seen(),
         );
-        let readable = match own {
-            Charset::Utf8 | Charset::Ascii => true,
-            Charset::Other => false,
-            Charset::Unspecified => self.inner.declared.as_deref().is_none_or(|l| {
-                l.eq_ignore_ascii_case(b"utf-8") || l.eq_ignore_ascii_case(b"us-ascii")
-            }),
-        };
-        if !readable {
+        if !own.readable(self.inner.declared_ok) {
             crate::wipe::wipe_vec(&mut out);
             return Err(FormError::encoding(EncodingError::UnsupportedCharset, at));
-        }
-        if is_charset {
-            self.inner.declared = Some(out.clone());
         }
         String::from_utf8(out).map_err(|e| {
             let mut bytes = e.into_bytes();

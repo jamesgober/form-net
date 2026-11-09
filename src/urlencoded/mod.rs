@@ -477,11 +477,21 @@ mod owned {
     }
 
     /// The iterator returned by [`pairs`].
-    #[derive(Debug, Clone)]
+    #[derive(Clone)]
     pub struct Pairs<'a> {
         raw: RawPairs<'a>,
         whole: Option<&'a str>,
         done: bool,
+    }
+
+    /// Shows the position, never the body: `whole` is every value (T-30).
+    impl core::fmt::Debug for Pairs<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("Pairs")
+                .field("raw", &self.raw)
+                .field("done", &self.done)
+                .finish_non_exhaustive()
+        }
     }
 
     fn component(raw: &[u8], needs_decoding: bool, offset: u64) -> Result<Cow<'_, str>, FormError> {

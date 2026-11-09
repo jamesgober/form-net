@@ -94,6 +94,11 @@ fn check_content_type(ct: &str) -> Result<(), FormError> {
         return Err(syntax(SyntaxError::AmbiguousQuote));
     }
     let invalid = || syntax(SyntaxError::InvalidContentType);
+    if crate::kind::has_empty_parameter(raw) {
+        // The parser refuses it (D-136); the writer never sends what it
+        // would not read.
+        return Err(invalid());
+    }
     let mt = parse_net::media::parse(raw, &crate::kind::HEADER_LIMITS).map_err(|_| invalid())?;
     if crate::kind::repeated_name(&mt.params()).is_some()
         || mt.type_().eq_ignore_ascii_case(b"multipart")
@@ -111,6 +116,13 @@ fn head_len(
     filename: Option<&str>,
     content_type: Option<&str>,
 ) -> Result<usize, FormError> {
+    // A name or file name holding `name=` is refused by the parser (D-136):
+    // escaping cannot add or remove one, so the plain text is checked.
+    if crate::kind::holds_name_assignment(name.as_bytes())
+        || filename.is_some_and(|f| crate::kind::holds_name_assignment(f.as_bytes()))
+    {
+        return Err(syntax(SyntaxError::MalformedParameter));
+    }
     let mut len = if first { 0usize } else { 2 };
     len = len
         .saturating_add(2)
@@ -177,7 +189,9 @@ fn put_head(
 /// # Errors
 ///
 /// `BufferTooSmall { needed }` (nothing is written);
-/// `Syntax { EmptyName | ControlInHeader | AmbiguousQuote | InvalidContentType }`.
+/// `Syntax { EmptyName | ControlInHeader | AmbiguousQuote | InvalidContentType
+/// | MalformedParameter }` (`MalformedParameter`: a name or file name that
+/// holds `name=`, which the parser refuses, D-136).
 ///
 /// # Examples
 ///

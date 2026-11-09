@@ -83,6 +83,10 @@ Out of scope, named so nobody assumes otherwise: decompression bombs (the HTTP l
 | an unquoted `name` or `filename` starting or ending with `'` | the token itself, or the quoted text | refused (`MalformedParameter`) | D-114 |
 | `name`, `filename`, or `filename*` not in lower case (`NAME=`) | the same parameter (RFC 7578), or an unknown one (readers that match exactly, multer 3.1 among them) | refused (`MalformedParameter`) | D-116 |
 | `name*`, `filename*0` and other starred parameters | joined or preferred by RFC 2231 readers | refused (`MalformedParameter`) | D-081 |
+| `boundary*` beside `boundary` in the request `Content-Type`, or any starred request parameter | Go's `mime.ParseMediaType` frames the body with the starred value | refused (`InvalidBoundary`, `InvalidContentType`) | D-136 |
+| an empty parameter (`;;`) in the request `Content-Type` or a part header | allowed by RFC 9110; Go refuses the whole list, so it sees no boundary, or a part with no name, which `net/http` skips | refused (`InvalidContentType`, `MalformedParameter`) | D-136 |
+| a parameter value that holds `name=` (`x="y;name=evil;"`, `filename="a; name=role;"`) | the value (RFC 6266), or the parameter itself (readers that search for `name=`, multer 3.1 among them) | refused (`MalformedParameter`) | D-136 |
+| a boundary starting or ending with `'` | the token itself, or the quoted text | refused (`InvalidBoundary`) | D-136 |
 | `filename` and `filename*` together | either one wins, by reader | refused (`BothFilenames`); `filename*` alone only by policy | D-014, FR-27 |
 | a repeated `Content-Disposition` or parameter | first or last wins, by reader | refused | FR-26 |
 | header folding, whitespace before a colon, control bytes | accepted by some | refused | FR-25 |
@@ -176,6 +180,31 @@ Run again on 2026-11-07 for 0.9, after D-117 and on the corpus with Firefox and 
 - **multer accepts, form-net refuses:** transfer encodings, nested `multipart/*`, a duplicated `Content-Disposition` or parameter, `name*` and `filename*` beside the plain form, `name = "x"`, padding and epilogues past form-net's budgets. multer reads each by its own rule (first or last wins, encodings ignored); a reader in front of it could read them another way, which is why form-net refuses them. No action for form-net.
 - **multer reads differently from its own original, form-net refuses:** a second `Content-Disposition` with another name, `\"` in a name, single quotes, bare LF in headers and before a delimiter. multer reads each, differently from the unmutated body; a reader in front of multer could disagree with it. No action for form-net.
 - **Both refuse:** NUL in a header, folding, whitespace before a colon, a cut close delimiter.
+
+The mutant set does not cover everything the two readers could disagree on. The 0.9.x adversarial review (below) built bodies by hand that multer 3.1.0, Go 1.27's `mime/multipart`, and form-net read differently, and checked each one by running those readers. Four were accepted by form-net: a parameter value holding `name=` or `filename=`, `boundary*` beside `boundary`, an empty parameter, and a single-quoted boundary. All four are refused since D-136, and each has a test in `tests/review_multipart_core.rs` or `tests/review_urlencoded_extract.rs`.
+
+### The 0.9.x adversarial review
+
+Three independent reviews (DIRECTIVES, definition of done item 10), each of one area: the multipart core, the driver and storage, and the urlencoded, extraction, and writer code. Each finding came with a failing test, and each was fixed so that its test passes (D-136 to D-146):
+
+| Severity | Finding | Fix |
+|---|---|---|
+| high | `boundary*` beside `boundary` accepted and ignored; Go frames with the starred value | refused, D-136 |
+| medium | an empty parameter accepted in `Content-Disposition` and the request `Content-Type`; Go skips the part or the body | refused, D-136 |
+| medium | a single-quoted boundary accepted, and sent by the writer | refused in `Boundary::new`, D-136 |
+| medium | a `part_end` refusal closed the sink instead of aborting it: a sink that commits on close kept a refused file | `part_end` runs before `close`, D-139 |
+| low | a parameter value holding `name=` read differently by multer | refused, D-136 |
+| low | a file field given twice, once as an empty input, accepted | `Duplicate`, D-137 |
+| low | `form!` accepted two fields with one wire name | a compile error, D-138 |
+| low | the driver's head copy could pass `memory_bound` by one header budget | the block copied once, D-140 |
+| low | a second `_charset_` field read differently by the buffered parser and `UploadSession`; `PartReader::text` ignored a skipped `_charset_` | one record, read before the part starts, D-141 |
+| low | `MultipartReader` never fed the epilogue, so its budget did not hold | the rest of the body is read, D-142 |
+| low | an aborted named spill gave its bytes back to the quota when the delete failed | kept reserved, as on drop, D-143 |
+| low | `Upload::parse_with` did not call `failed` on a setup error | called, D-144 |
+| low | which error a body with two errors reported depended on the split (the body limit; a framing error against a budget) | parsed to the limit, data charged first, D-145 |
+| low | `Pairs` and `Serializer` `Debug` printed the body and the values written | redacted, D-146 |
+
+Recorded, not changed: under the opt-in `ExtendedFilenamePolicy::Ignore` a part with only `filename*` is a text field, where an RFC 2231 reader sees a file. `Ignore` is James's decision (D-014); the 1.0 readiness note recommends refusing that part under `Ignore`, and `docs/API.md` tells a route behind such a reader to keep `Refuse`.
 
 ### The streaming parser against a reference
 

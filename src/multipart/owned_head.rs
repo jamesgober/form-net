@@ -69,31 +69,54 @@ impl OwnedPartHead {
     }
 
     /// Replaces this copy with `head`. The old bytes are wiped first, and a
-    /// buffer too small for the new head is replaced, not reallocated, so
-    /// no copy of a head is freed unwiped.
+    /// buffer too small for the new head is wiped and freed before its
+    /// replacement is allocated, so no copy of a head is freed unwiped and
+    /// two buffers are never held at once. The header block is copied once:
+    /// the name, file name, and content type that lie inside it are kept as
+    /// positions in that copy (D-140).
     pub fn copy_from(&mut self, head: &PartHead<'_>) {
         crate::wipe::wipe(&mut self.buf);
         self.buf.clear();
+        let block = head.block();
+        let outside = |s: &[u8]| {
+            if within(block, s).is_some() {
+                0
+            } else {
+                s.len()
+            }
+        };
         let needed = [
-            head.block().len(),
-            head.name().len(),
-            head.name_raw().len(),
-            head.filename().map_or(0, |f| f.raw().len()),
-            head.content_type().map_or(0, |c| c.raw().len()),
+            block.len(),
+            outside(head.name().as_bytes()),
+            outside(head.name_raw()),
+            head.filename().map_or(0, |f| outside(f.raw())),
+            head.content_type().map_or(0, |c| outside(c.raw())),
         ]
         .iter()
         .fold(0usize, |a, n| a.saturating_add(*n));
         if needed > self.buf.capacity() {
-            let mut old = core::mem::replace(&mut self.buf, Vec::with_capacity(needed));
+            let mut old = core::mem::take(&mut self.buf);
             crate::wipe::wipe_vec(&mut old);
+            drop(old);
+            self.buf = Vec::with_capacity(needed);
         }
         self.index = head.index();
-        self.block = self.push(head.block());
-        self.name = self.push(head.name().as_bytes());
-        self.name_raw = self.push(head.name_raw());
+        self.block = self.push(block);
+        let base = self.block.start;
+        let mut place = |s: &[u8]| match within(block, s) {
+            Some(r) => r.start.saturating_add(base)..r.end.saturating_add(base),
+            None => {
+                // As `push`, on the buffer alone, so the fields stay free.
+                let start = self.buf.len();
+                crate::wipe::append_wiping(&mut self.buf, s, s.len(), usize::MAX);
+                start..self.buf.len()
+            }
+        };
+        self.name = place(head.name().as_bytes());
+        self.name_raw = place(head.name_raw());
         self.kind = Some(head.kind());
-        self.filename = head.filename().map(|f| (self.push(f.raw()), f.source()));
-        self.content_type = head.content_type().map(|c| self.push(c.raw()));
+        self.filename = head.filename().map(|f| (place(f.raw()), f.source()));
+        self.content_type = head.content_type().map(|c| place(c.raw()));
         self.charset = Some(head.charset());
     }
 
@@ -124,4 +147,12 @@ impl Drop for OwnedPartHead {
         // the default limits, was never written (D-103).
         crate::wipe::wipe(&mut self.buf);
     }
+}
+
+/// Where `part` lies inside `whole`, when it is a subslice of it: compared
+/// by address, so equal bytes elsewhere do not count.
+fn within(whole: &[u8], part: &[u8]) -> Option<Range<usize>> {
+    let start = (part.as_ptr() as usize).checked_sub(whole.as_ptr() as usize)?;
+    let end = start.checked_add(part.len())?;
+    (end <= whole.len()).then_some(start..end)
 }

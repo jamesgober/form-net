@@ -856,12 +856,32 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
         }
     }
 
+    /// An input that crosses `max_body_bytes`: off the hot path. It parses
+    /// what fits, as a split at the limit would, and refuses only when a byte
+    /// past the limit is needed, so an error inside the limit is reported
+    /// the same however the body was split (D-080, D-145).
+    #[cold]
+    #[inline(never)]
+    fn run_over_limit(&mut self, input: &[u8]) -> Result<(usize, Outcome), FormError> {
+        let over = FormError::limit(Limit::Body, Location::at(self.limits.body()));
+        let room = self.limits.body().saturating_sub(self.bytes_seen);
+        if room == 0 {
+            return Err(over);
+        }
+        let within = input.get(..room as usize).unwrap_or(&[]);
+        let (consumed, outcome) = self.run(within, false)?;
+        // More input is needed, or the body ended with bytes left past the
+        // limit (epilogue): either way a byte past it is read.
+        if matches!(outcome, Outcome::NeedInput | Outcome::End) {
+            return Err(over);
+        }
+        Ok((consumed, outcome))
+    }
+
     fn run(&mut self, input: &[u8], eof: bool) -> Result<(usize, Outcome), FormError> {
+        // The comparison saturates, so `u64::MAX` is no limit at all.
         if self.bytes_seen.saturating_add(input.len() as u64) > self.limits.body() {
-            return Err(FormError::limit(
-                Limit::Body,
-                Location::at(self.limits.body()),
-            ));
+            return self.run_over_limit(input);
         }
         let mut pos = 0usize;
         loop {
@@ -1363,6 +1383,11 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
             }
             // All of `hay` extended the partial match.
             if eof {
+                // Every byte is data now: charge it first, as a split body
+                // charges it before it learns the body ended (D-145).
+                let boundary = self.boundary;
+                self.take_data(boundary.delimiter().get(..k0).unwrap_or(&[]))?;
+                self.take_data(hay)?;
                 return Err(FormError::syntax(
                     SyntaxError::Truncated,
                     self.at(input_len),
@@ -1373,7 +1398,13 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
         }
         let (k, m, found) = self.boundary.run(0, usize::from(self.bare), hay);
         match found {
-            Hit::BareBreak(after) => Err(self.bare_break(after, pos)),
+            Hit::BareBreak(after) => {
+                // The data before the break is charged first, as a split
+                // before the break would charge it (D-145).
+                let start = after.saturating_sub(len.saturating_sub(1));
+                self.take_data(hay.get(..start).unwrap_or(&[]))?;
+                Err(self.bare_break(after, pos))
+            }
             Hit::Delimiter(after) => {
                 let data = after.saturating_sub(len);
                 self.k = 0;
@@ -1384,6 +1415,8 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
             }
             Hit::None => {
                 if eof {
+                    // As above: the rest is data, charged before `Truncated`.
+                    self.take_data(hay)?;
                     return Err(FormError::syntax(
                         SyntaxError::Truncated,
                         self.at(input_len),

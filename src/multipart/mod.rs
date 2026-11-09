@@ -393,12 +393,6 @@ mod buffered {
         }
     }
 
-    /// Whether a text field's charset (its own, else the `_charset_` field
-    /// before it, else UTF-8) is one form-net reads as text.
-    fn text_charset_ok(own: Charset, declared: Option<&[u8]>) -> bool {
-        own.readable(crate::multipart::parser::declared_readable(declared))
-    }
-
     /// Parses a buffered `multipart/form-data` body with the default limits
     /// and policy. Part data borrows the body (zero copy); a name borrows too,
     /// except where an HTML escape had to be decoded.
@@ -539,6 +533,11 @@ mod buffered {
         let mut current: Option<(Part<'a>, bool, bool)> = None;
         loop {
             let rest = body.get(pos..).unwrap_or(&[]);
+            // Read before `advance`: a `_charset_` part that starts in this
+            // step resets the record, and the part's text is read by the
+            // value declared before it, as the driver reads it (D-128, D-141).
+            let declared_ok =
+                crate::multipart::parser::declared_readable(parser.declared_charset());
             let (consumed, outcome) = parser.advance(rest, true)?;
             let base = pos;
             pos = pos.saturating_add(consumed);
@@ -566,7 +565,7 @@ mod buffered {
                         };
                         (raw, source)
                     });
-                    let charset_ok = text_charset_ok(facts.charset, parser.declared_charset());
+                    let charset_ok = facts.charset.readable(declared_ok);
                     let part = Part {
                         index: parser.parts_seen().saturating_sub(1),
                         name,

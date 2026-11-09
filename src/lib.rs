@@ -147,7 +147,7 @@ pub use error::{
 };
 #[cfg(feature = "alloc")]
 #[doc(hidden)]
-pub use extract::{__push_field_error, __unknown, __value_error};
+pub use extract::{__push_field_error, __repeated_wire_name, __unknown, __value_error};
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use extract::{

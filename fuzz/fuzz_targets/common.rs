@@ -123,7 +123,11 @@ pub fn reference(boundary: &[u8], body: &[u8]) -> Option<Vec<Record>> {
         for param in line.split("; ") {
             let (k, v) = param.split_once('=')?;
             let v = v.strip_prefix('"')?.strip_suffix('"')?;
-            if v.contains(['"', '\\', '%', '\r', '\n']) || !v.bytes().all(|b| b >= 0x20 && b != 0x7F) {
+            // form-net refuses a value that holds `name=` (D-136).
+            if v.contains(['"', '\\', '%', '\r', '\n'])
+                || v.to_ascii_lowercase().contains("name=")
+                || !v.bytes().all(|b| b >= 0x20 && b != 0x7F)
+            {
                 return None;
             }
             match k {
