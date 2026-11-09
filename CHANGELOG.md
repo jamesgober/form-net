@@ -13,7 +13,7 @@
 
 ---
 
-## [0.9.1] - 2026-11-08
+## [0.9.1] - 2026-11-09
 
 Review: the first freeze candidate. The 0.9.x adversarial review found
 18 defects, one high; each is fixed against its failing test.
