@@ -563,7 +563,15 @@ pub enum ExtendedFilenamePolicy {
     Refuse,
     /// Accept and decode it (UTF-8 only) when it is the only file name.
     AcceptAlone,
-    /// Drop it; a part with only `filename*` is then a text field.
+    /// Since 0.9.2 the same as `Refuse`: a part with both file name
+    /// parameters is refused under every policy, and a part with only
+    /// `filename*` would be a file to RFC 2231 readers and a field to
+    /// form-net, so it is refused too (D-147). Kept so configurations that
+    /// name it still compile.
+    #[deprecated(
+        since = "0.9.2",
+        note = "refuses as `Refuse` does (D-147); use `ExtendedFilenamePolicy::Refuse`"
+    )]
     Ignore,
 }
 
@@ -786,6 +794,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_policy_setters() {
         let p = Policy::DEFAULT
             .with_percent(PercentPolicy::Literal)

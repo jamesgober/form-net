@@ -88,6 +88,7 @@ Out of scope, named so nobody assumes otherwise: decompression bombs (the HTTP l
 | a parameter value that holds `name=` (`x="y;name=evil;"`, `filename="a; name=role;"`) | the value (RFC 6266), or the parameter itself (readers that search for `name=`, multer 3.1 among them) | refused (`MalformedParameter`) | D-136 |
 | a boundary starting or ending with `'` | the token itself, or the quoted text | refused (`InvalidBoundary`) | D-136 |
 | `filename` and `filename*` together | either one wins, by reader | refused (`BothFilenames`); `filename*` alone only by policy | D-014, FR-27 |
+| `filename*` alone under `Ignore` | a file to RFC 2231 readers | refused (`ExtendedFilename`), as under `Refuse` | D-147 |
 | a repeated `Content-Disposition` or parameter | first or last wins, by reader | refused | FR-26 |
 | header folding, whitespace before a colon, control bytes | accepted by some | refused | FR-25 |
 | `Content-Transfer-Encoding` other than identity | ignored by most | refused | T-26 |
@@ -204,7 +205,7 @@ Three independent reviews (DIRECTIVES, definition of done item 10), each of one 
 | low | which error a body with two errors reported depended on the split (the body limit; a framing error against a budget) | parsed to the limit, data charged first, D-145 |
 | low | `Pairs` and `Serializer` `Debug` printed the body and the values written | redacted, D-146 |
 
-Recorded, not changed: under the opt-in `ExtendedFilenamePolicy::Ignore` a part with only `filename*` is a text field, where an RFC 2231 reader sees a file. `Ignore` is James's decision (D-014); the 1.0 readiness note recommends refusing that part under `Ignore`, and `docs/API.md` tells a route behind such a reader to keep `Refuse`.
+Decided after the review, in 0.9.2: under the opt-in `ExtendedFilenamePolicy::Ignore` a part with only `filename*` was a text field, where an RFC 2231 reader sees a file. It is refused now, as under `Refuse` (D-147); `Ignore` is deprecated, since a part with both file names was already refused under every policy. `tests/review_multipart_core.rs` holds it.
 
 ### The streaming parser against a reference
 

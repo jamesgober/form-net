@@ -1,7 +1,7 @@
 # form-net - API Reference
 
 > Reference for every public item in `form-net`: signature, behaviour, the errors each item can return, cost, and examples.
-> **Current release: `0.9.1` (beta, the first freeze candidate).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.9.2` (beta, a freeze candidate).** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate, and their examples are not compiled until they ship. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -1374,7 +1374,12 @@ What a `%` not followed by two hex digits means in urlencoded input. `Refuse` (d
 ```rust,ignore
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExtendedFilenamePolicy { Refuse, AcceptAlone, Ignore }
+pub enum ExtendedFilenamePolicy {
+    Refuse,
+    AcceptAlone,
+    #[deprecated(since = "0.9.2")] // refuses as `Refuse` does (D-147)
+    Ignore,
+}
 ```
 
 What a `filename*` parameter (RFC 8187) in a part's `Content-Disposition` means. RFC 7578 section 4.2 says senders must not use it in `multipart/form-data`, and browsers never do.
@@ -1383,7 +1388,7 @@ What a `filename*` parameter (RFC 8187) in a part's `Content-Disposition` means.
 |---|---|
 | `Refuse` (default) | any `filename*` is refused (`Policy { ExtendedFilename }`) |
 | `AcceptAlone` | accepted and decoded (UTF-8 only, at most `max_filename_bytes` decoded) when it is the only file name parameter; `FileName::source` is `Extended` |
-| `Ignore` | the parameter is dropped; a part with only `filename*` is then a text field. An inspection layer that reads RFC 2231 sees a file there, so a route behind one keeps `Refuse` |
+| `Ignore` (deprecated, 0.9.2) | the same as `Refuse`. It dropped the parameter, which made a part with only `filename*` a text field where an RFC 2231 reader sees a file; that part is now refused, and a part with both names was always refused, so nothing is left for `Ignore` to drop (D-147). Kept so configurations that name it compile |
 
 A part with both `filename` and `filename*` is refused under every policy (`Policy { BothFilenames }`): which name wins is exactly where readers disagree. A malformed `filename*` is `Encoding { InvalidExtendedValue }` under `AcceptAlone`.
 
