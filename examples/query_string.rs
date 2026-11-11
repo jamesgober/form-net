@@ -6,9 +6,9 @@ use form_net::FormError;
 
 fn main() -> Result<(), FormError> {
     let query = form_net::parse_query(b"?q=rust+forms&page=2&tag=a&tag=b")?;
-    println!("q:    {:?}", query.get("q"));
-    println!("page: {:?}", query.get("page"));
-    println!("tags: {:?}", query.get_all("tag").collect::<Vec<_>>());
+    println!("q:    {:?}", query.field("q"));
+    println!("page: {:?}", query.field("page"));
+    println!("tags: {:?}", query.fields("tag").collect::<Vec<_>>());
 
     // Building one for a redirect or a link.
     let mut url = String::from("/search?");

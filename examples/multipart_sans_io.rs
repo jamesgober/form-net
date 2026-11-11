@@ -3,7 +3,7 @@
 //!
 //! Run with `cargo run --example multipart_sans_io`.
 
-use form_net::{Event, FormError, FormKind, Limits, MultipartParser, Policy};
+use form_net::{FormError, FormKind, Limits, MultipartEvent, MultipartParser, Policy};
 
 fn main() -> Result<(), FormError> {
     let content_type = b"multipart/form-data; boundary=X";
@@ -29,19 +29,21 @@ Content-Disposition: form-data; name=\"upload\"; filename=\"data.bin\"\r\n\r\n\
             let step = parser.parse(rest, last)?;
             rest = &rest[step.consumed..];
             match step.event {
-                Event::PartStart(head) => println!(
+                MultipartEvent::PartStart(head) => println!(
                     "part {} {:?} ({:?})",
                     head.index(),
                     head.name(),
                     head.kind()
                 ),
-                Event::Data(bytes) => println!("  {} bytes", bytes.len()),
-                Event::PartEnd(summary) => println!("  end: {} bytes in total", summary.bytes),
-                Event::End => {
+                MultipartEvent::Data(bytes) => println!("  {} bytes", bytes.len()),
+                MultipartEvent::PartEnd(summary) => {
+                    println!("  end: {} bytes in total", summary.bytes)
+                }
+                MultipartEvent::End => {
                     println!("done");
                     break;
                 }
-                Event::NeedInput => break,
+                MultipartEvent::NeedInput => break,
                 _ => {}
             }
         }

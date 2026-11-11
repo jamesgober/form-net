@@ -9,7 +9,7 @@ use std::io::{self, Read};
 use crate::error::{EncodingError, FormError, Location};
 use crate::limits::{Limits, Policy};
 use crate::multipart::owned_head::OwnedPartHead;
-use crate::multipart::parser::{Event, MultipartParser, PartSummary};
+use crate::multipart::parser::{MultipartEvent, MultipartParser, PartSummary};
 
 const READ_BUFFER: usize = 64 * 1024;
 
@@ -178,20 +178,20 @@ impl<R: Read> MultipartReader<R> {
             let step = self.parser.parse(input, self.eof)?;
             self.start = self.start.saturating_add(step.consumed);
             match step.event {
-                Event::PartStart(head) => {
+                MultipartEvent::PartStart(head) => {
                     self.head.copy_from(&head);
                     self.declared_ok = declared_ok;
                     return Ok(Got::Start);
                 }
-                Event::Data(bytes) => {
+                MultipartEvent::Data(bytes) => {
                     crate::wipe::wipe(&mut self.pending);
                     self.pending.clear();
                     crate::wipe::append_wiping(&mut self.pending, bytes, 4096, usize::MAX);
                     self.pending_at = 0;
                     return Ok(Got::Data);
                 }
-                Event::PartEnd(s) => return Ok(Got::End(s)),
-                Event::End => return Ok(Got::Done),
+                MultipartEvent::PartEnd(s) => return Ok(Got::End(s)),
+                MultipartEvent::End => return Ok(Got::Done),
                 _ => {}
             }
         }

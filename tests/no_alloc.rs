@@ -6,7 +6,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use form_net::{Boundary, Event, Limits, MultipartParser, PercentPolicy, Policy};
+use form_net::{Boundary, Limits, MultipartEvent, MultipartParser, PercentPolicy, Policy};
 
 struct Counting;
 
@@ -96,7 +96,7 @@ fn test_multipart_parser_never_allocates_after_construction() {
                 let step = parser.parse(rest, false).unwrap();
                 rest = &rest[step.consumed..];
                 events += 1;
-                if matches!(step.event, Event::NeedInput | Event::End) {
+                if matches!(step.event, MultipartEvent::NeedInput | MultipartEvent::End) {
                     break;
                 }
             }
@@ -126,7 +126,7 @@ fn test_multipart_with_buffer_never_allocates() {
         loop {
             let step = p.parse(rest, true).unwrap();
             rest = &rest[step.consumed..];
-            if matches!(step.event, Event::End) {
+            if matches!(step.event, MultipartEvent::End) {
                 break;
             }
         }

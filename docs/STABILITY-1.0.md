@@ -1,6 +1,6 @@
 # form-net 1.0 stability contract
 
-**Status: draft (0.9.1).** This is what `form-net 1.0.0` will commit to, written before the freeze so the release candidates can be checked against it. It takes effect when 1.0.0 ships, on James's decision, after the audit recorded at the end of this file.
+**Status: draft (0.10.0).** This is what `form-net 1.0.0` will commit to, written before the freeze so the release candidates can be checked against it. It takes effect when 1.0.0 ships, on James's decision, after the audit recorded at the end of this file.
 
 ---
 
@@ -16,7 +16,7 @@ When 1.0.0 ships, everything in [the frozen surface](#the-frozen-surface) and [t
 
 ## The frozen surface
 
-Every item in the [item index of `docs/API.md`](API.md#item-index) (#1 to #75) with its signature and documented behaviour as of 1.0.0: names, parameter and return types, trait items, feature gates, and the `Send` and `Sync` of each type. Items whose names start with `__` are macro support, hidden from the docs, and not part of the API.
+Every item in the [item index of `docs/API.md`](API.md#item-index) with its signature and documented behaviour as of 1.0.0: names, parameter and return types, trait items, feature gates, and the `Send` and `Sync` of each type. Items whose names start with `__` are macro support, hidden from the docs, and not part of the API.
 
 The feature flags (`std` default, `alloc`, `random`, `fs`, `unicode`) and what each enables are frozen. A feature is never removed and never stops implying what it implies.
 
@@ -93,4 +93,5 @@ To be recorded here before 1.0.0 (DIRECTIVES, section 3): API, docs, tests, benc
 | Use by web-net | done for the first site's routes (D-134) |
 | Use by customs-sec as the inspector | open |
 | Two weeks on a deployed site | open |
+| Simplicity audit (one call per common use, one name per thing) | done, 0.10.0 (D-148) |
 | This contract | draft; final text at 1.0 |

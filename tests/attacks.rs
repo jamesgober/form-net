@@ -194,7 +194,7 @@ fn test_attack_t16_semicolon_is_not_a_separator() {
 #[test]
 fn test_attack_t17_parameter_pollution_refused_by_strict_accessors() {
     let form = form_net::parse_urlencoded(b"role=user&role=admin").unwrap();
-    assert!(form.get_one("role").is_err());
+    assert!(form.field_one("role").is_err());
     let body = b"--X\r\nContent-Disposition: form-data; name=role\r\n\r\nuser\r\n--X\r\nContent-Disposition: form-data; name=role\r\n\r\nadmin\r\n--X--";
     let mp = form_net::parse_multipart(CT, body).unwrap();
     assert!(mp.field_one("role").is_err());

@@ -42,7 +42,7 @@ src/
   multipart/
     mod.rs            parse_multipart*, Multipart, Part
     boundary.rs       Boundary: validation, delimiter, KMP failure table, generate
-    parser.rs         MultipartParser state machine, Step, Event, PartHead
+    parser.rs         MultipartParser state machine, MultipartStep, MultipartEvent, PartHead
     header.rs         header blocks, Content-Disposition, part budgets
     filename.rs       FileName views
     driver.rs         Driver: the one implementation of the hook order
@@ -91,7 +91,7 @@ End ─▶ Inspector::end
 any error or Refuse ─▶ Sink::abort ─▶ Inspector::failed (once)
 ```
 
-The sink is opened lazily (D-089): a part refused or skipped by the inspector makes no sink call at all. `UploadSession`, `Upload::parse_with`, `parse_multipart_inspected`, and `FromForm::from_body_inspected` all run this one driver, or follow the same order over a buffered body. Inspectors chain as pairs: `(customs, (sentinel, app))`, the first refusal winning.
+The sink is opened lazily (D-089): a part refused or skipped by the inspector makes no sink call at all. `UploadSession`, `read_multipart_inspected`, `parse_multipart_inspected`, and `FromForm::from_body_inspected` all run this one driver, or follow the same order over a buffered body. Inspectors chain as pairs: `(customs, (sentinel, app))`, the first refusal winning.
 
 ## Storage
 

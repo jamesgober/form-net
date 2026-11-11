@@ -23,8 +23,8 @@ fuzz_target!(|data: &[u8]| {
         let typed = Target::from_body(b"application/x-www-form-urlencoded", body);
         if let Ok(t) = typed {
             let form = form_net::parse_urlencoded(body).expect("extraction accepted what parsing refused");
-            assert_eq!(form.get("a"), Some(t.a.as_str()));
-            assert_eq!(t.many.len(), form.get_all("many[]").count());
+            assert_eq!(form.field("a"), Some(t.a.as_str()));
+            assert_eq!(t.many.len(), form.fields("many[]").count());
             assert!(t.file.is_none());
         }
     } else {

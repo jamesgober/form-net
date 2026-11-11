@@ -10,7 +10,7 @@ fn main() -> Result<(), FormError> {
     let body = b"email=ada%40example.com&password=s3cret%21&remember=on";
 
     let form = form_net::parse_urlencoded(body)?;
-    println!("email:    {:?}", form.get("email"));
+    println!("email:    {:?}", form.field("email"));
     println!("remember: {}", form.contains("remember"));
     // `Debug` never prints values: safe to log.
     println!("debug:    {form:?}");
@@ -24,7 +24,7 @@ fn main() -> Result<(), FormError> {
 
     // A repeated name, refused by the strict accessor.
     let polluted = form_net::parse_urlencoded(b"role=user&role=admin")?;
-    match polluted.get_one("role") {
+    match polluted.field_one("role") {
         Ok(v) => println!("role: {v:?}"),
         Err(e) => println!("refused: {e} (status {})", e.status_hint()),
     }

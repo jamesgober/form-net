@@ -65,7 +65,7 @@ fn body(files: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 fn upload(store: &Store, b: &[u8]) -> Result<Upload, FormError> {
-    Upload::parse_with(
+    form_net::read_multipart_inspected(
         CT,
         b,
         &Limits::DEFAULT,

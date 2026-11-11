@@ -15,13 +15,13 @@ use crate::multipart::parser::{Charset, PartHead, PartKind};
 /// # Examples
 ///
 /// ```
-/// use form_net::{Boundary, Event, Limits, MultipartParser, OwnedPartHead, Policy};
+/// use form_net::{Boundary, MultipartEvent, Limits, MultipartParser, OwnedPartHead, Policy};
 ///
 /// let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
 /// let body = b"--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--X--";
 /// let mut kept = OwnedPartHead::new();
 /// let step = parser.parse(body, true)?;
-/// if let Event::PartStart(head) = step.event {
+/// if let MultipartEvent::PartStart(head) = step.event {
 ///     kept.copy_from(&head);
 /// }
 /// assert_eq!(kept.view().name(), "a");

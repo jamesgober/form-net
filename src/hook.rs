@@ -279,7 +279,7 @@ impl<I: Inspector + ?Sized> Inspector for alloc::boxed::Box<I> {
 /// use form_net::{Limits, NoInspector, Policy};
 ///
 /// let form = form_net::parse_urlencoded_inspected(b"a=1", &Limits::DEFAULT, &Policy::DEFAULT, &mut NoInspector)?;
-/// assert_eq!(form.get("a"), Some("1"));
+/// assert_eq!(form.field("a"), Some("1"));
 /// # Ok::<(), form_net::FormError>(())
 /// ```
 #[derive(Clone, Copy, Debug, Default)]
@@ -333,7 +333,7 @@ impl Inspector for NoInspector {}
 /// let body = b"csrf_token=good&email=a%40b.example";
 /// let form = form_net::parse_urlencoded_inspected(body, &Limits::DEFAULT, &Policy::DEFAULT, &mut check)?;
 /// assert!(check.verified());
-/// assert_eq!(form.get("email"), Some("a@b.example"));
+/// assert_eq!(form.field("email"), Some("a@b.example"));
 ///
 /// let mut check = TokenCheck::new("csrf_token", |_| Err(Refusal::new(403, "csrf.rejected")));
 /// let err = form_net::parse_urlencoded_inspected(b"csrf_token=bad", &Limits::DEFAULT, &Policy::DEFAULT, &mut check)
