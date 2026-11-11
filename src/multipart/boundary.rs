@@ -396,7 +396,7 @@ pub(crate) mod tests {
     /// matcher's byte visits.
     #[cfg(feature = "alloc")]
     fn visits_for(body: &[u8], chunk: usize) -> u64 {
-        use crate::{Event, Limits, MultipartParser, Policy};
+        use crate::{Limits, MultipartEvent, MultipartParser, Policy};
         let limits = Limits::DEFAULT
             .with_max_body_bytes(64 << 20)
             .with_max_file_bytes(64 << 20);
@@ -413,7 +413,7 @@ pub(crate) mod tests {
             loop {
                 let step = p.parse(rest, i + 1 == chunks.len()).unwrap();
                 rest = &rest[step.consumed..];
-                if matches!(step.event, Event::NeedInput | Event::End) {
+                if matches!(step.event, MultipartEvent::NeedInput | MultipartEvent::End) {
                     break;
                 }
             }

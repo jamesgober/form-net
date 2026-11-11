@@ -70,12 +70,12 @@ fn main() {
     println!("| Item | Input | Estimate | Measured |");
     println!("|---|---|---|---|");
 
-    // Form::get: the last of ten fields, so ten names are compared.
+    // Form::field: the last of ten fields, so ten names are compared.
     let body = b"a0=1&a1=2&a2=3&a3=4&a4=5&a5=6&a6=7&a7=8&a8=9&a9=10";
     let form = form_net::parse_urlencoded(body).unwrap();
-    let t = best(|| form.get(black_box("a9")).map_or(0, str::len));
+    let t = best(|| form.field(black_box("a9")).map_or(0, str::len));
     row(
-        "`Form::get`",
+        "`Form::field`",
         "the last of 10 fields",
         "under 5 ns per field",
         format!("{} ({:.1} ns per field)", fmt(t), t / 10.0),

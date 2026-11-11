@@ -4,7 +4,9 @@
 //!
 //! Run with `cargo run --example no_std_core`.
 
-use form_net::{Boundary, Event, FormError, Limits, MultipartParser, PercentPolicy, Policy};
+use form_net::{
+    Boundary, FormError, Limits, MultipartEvent, MultipartParser, PercentPolicy, Policy,
+};
 
 const LIMITS: Limits = Limits::DEFAULT
     .with_max_part_header_bytes(512)
@@ -38,9 +40,9 @@ fn main() -> Result<(), FormError> {
         let step = parser.parse(rest, true)?;
         rest = &rest[step.consumed..];
         match step.event {
-            Event::PartStart(head) => println!("part {}", head.name()),
-            Event::Data(bytes) => println!("  data {bytes:?}"),
-            Event::End => break,
+            MultipartEvent::PartStart(head) => println!("part {}", head.name()),
+            MultipartEvent::Data(bytes) => println!("  data {bytes:?}"),
+            MultipartEvent::End => break,
             _ => {}
         }
     }

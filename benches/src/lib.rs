@@ -11,7 +11,7 @@ use std::convert::Infallible;
 use std::io::{self, Cursor};
 
 use bytes::Bytes;
-use form_net::{Boundary, Event, FromForm, Limits, MultipartParser, NoInspector, Policy};
+use form_net::{Boundary, MultipartEvent, FromForm, Limits, MultipartParser, NoInspector, Policy};
 
 /// The boundary Chrome sends.
 pub const BOUNDARY: &str = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
@@ -341,8 +341,8 @@ pub fn fnet_stream(body: &[u8], chunk: usize) -> usize {
             let step = p.parse(rest, last).unwrap();
             rest = &rest[step.consumed..];
             match step.event {
-                Event::Data(d) => total += d.len(),
-                Event::NeedInput | Event::End => break,
+                MultipartEvent::Data(d) => total += d.len(),
+                MultipartEvent::NeedInput | MultipartEvent::End => break,
                 _ => {}
             }
         }

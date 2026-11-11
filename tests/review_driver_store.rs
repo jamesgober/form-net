@@ -205,14 +205,14 @@ fn test_part_end_refusal_closes_sink_instead_of_aborting() {
     );
 }
 
-/// `inspector.failed` is not called when `Upload::parse_with` fails on the
+/// `inspector.failed` is not called when `Upload::parse_with` (now `read_multipart_inspected`) fails on the
 /// `Content-Type` (or on the limits), while `parse_multipart_inspected`
 /// and `from_body_inspected` call it for the same failure (D-043: once on
 /// every failed parse). A probe that sends bad media types to an upload
 /// route is invisible to the detection layer.
 #[test]
 fn test_upload_parse_with_bad_content_type_skips_inspector_failed() {
-    use form_net::{FormError, Inspector, Upload};
+    use form_net::{FormError, Inspector};
 
     #[derive(Default)]
     struct Count(u32);
@@ -231,7 +231,7 @@ fn test_upload_parse_with_bad_content_type_skips_inspector_failed() {
     let store = Store::memory_only();
     let mut b = Count::default();
     assert!(
-        Upload::parse_with(
+        form_net::read_multipart_inspected(
             bad,
             &b""[..],
             &Limits::DEFAULT,
@@ -241,7 +241,10 @@ fn test_upload_parse_with_bad_content_type_skips_inspector_failed() {
         )
         .is_err()
     );
-    assert_eq!(b.0, 1, "Upload::parse_with: failed must be called once");
+    assert_eq!(
+        b.0, 1,
+        "read_multipart_inspected: failed must be called once"
+    );
 }
 
 /// D-101 keeps a file's bytes reserved when its temporary name cannot be

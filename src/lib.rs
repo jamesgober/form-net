@@ -15,11 +15,11 @@
 //! ```
 //! // A urlencoded body
 //! let form = form_net::parse_urlencoded(b"email=a%40b.example&remember=on")?;
-//! assert_eq!(form.get("email"), Some("a@b.example"));
+//! assert_eq!(form.field("email"), Some("a@b.example"));
 //!
 //! // A query string
 //! let query = form_net::parse_query(b"?q=rust+forms&page=2")?;
-//! assert_eq!(query.get("q"), Some("rust forms"));
+//! assert_eq!(query.field("q"), Some("rust forms"));
 //!
 //! // Building one
 //! assert_eq!(form_net::serialize_urlencoded([("q", "rust forms")]), "q=rust+forms");
@@ -88,7 +88,7 @@
 //! [repository](https://github.com/jamesgober/form-net), with
 //! `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, and
 //! `docs/PERFORMANCE.md` (measurements against the other Rust form parsers).
-//! This release (0.9) is feature complete, optimised, hardened, polished, and in beta.
+//! This release (0.10) is feature complete, optimised, hardened, polished, and in beta.
 
 #![no_std]
 #![doc(html_root_url = "https://docs.rs/form-net")]
@@ -171,7 +171,8 @@ pub use multipart::filename::{FileName, FileNameSource};
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use multipart::owned_head::OwnedPartHead;
 pub use multipart::parser::{
-    Charset, ContentType, Event, Headers, MultipartParser, PartHead, PartKind, PartSummary, Step,
+    Charset, ContentType, Headers, MultipartEvent, MultipartParser, MultipartStep, PartHead,
+    PartKind, PartSummary,
 };
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
@@ -203,7 +204,8 @@ pub use io::{MultipartReader, PartReader};
 #[cfg_attr(docsrs, doc(cfg(feature = "fs")))]
 pub use store::{
     SpillBudget, SpillMode, SpillQuota, Store, StoreError, StoreSink, StoreStats, StoredFile,
-    StoredReader, Upload, UploadSession, read_multipart, sweep,
+    StoredReader, Upload, UploadSession, read_multipart, read_multipart_inspected,
+    read_multipart_with, sweep,
 };
 
 /// Crate version string, populated by Cargo at build time.

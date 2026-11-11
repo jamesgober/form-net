@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use form_net::{Boundary, Event, FormError, Limits, MultipartParser, PartKind, Policy};
+use form_net::{Boundary, MultipartEvent, FormError, Limits, MultipartParser, PartKind, Policy};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Record {
@@ -28,7 +28,7 @@ pub fn drive(boundary: &[u8], chunks: &[&[u8]], limits: &Limits, policy: &Policy
         loop {
             if done {
                 let step = parser.parse(rest, last)?;
-                assert!(matches!(step.event, Event::End));
+                assert!(matches!(step.event, MultipartEvent::End));
                 assert_eq!(step.consumed, rest.len());
                 break;
             }
@@ -36,7 +36,7 @@ pub fn drive(boundary: &[u8], chunks: &[&[u8]], limits: &Limits, policy: &Policy
             assert!(step.consumed <= rest.len());
             rest = &rest[step.consumed..];
             match step.event {
-                Event::PartStart(head) => {
+                MultipartEvent::PartStart(head) => {
                     assert!(current.is_none());
                     assert!(!head.name().is_empty());
                     current = Some(Record {
@@ -46,22 +46,22 @@ pub fn drive(boundary: &[u8], chunks: &[&[u8]], limits: &Limits, policy: &Policy
                         data: Vec::new(),
                     });
                 }
-                Event::Data(bytes) => {
+                MultipartEvent::Data(bytes) => {
                     assert!(!bytes.is_empty());
                     current.as_mut().expect("data inside a part").data.extend_from_slice(bytes);
                 }
-                Event::PartEnd(summary) => {
+                MultipartEvent::PartEnd(summary) => {
                     let rec = current.take().expect("end inside a part");
                     assert_eq!(summary.bytes, rec.data.len() as u64);
                     out.push(rec);
                 }
-                Event::End => {
+                MultipartEvent::End => {
                     done = true;
                     if rest.is_empty() {
                         break;
                     }
                 }
-                Event::NeedInput => {
+                MultipartEvent::NeedInput => {
                     assert!(rest.is_empty());
                     break;
                 }

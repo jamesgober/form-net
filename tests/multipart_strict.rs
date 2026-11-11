@@ -367,5 +367,5 @@ fn test_poisoned_after_error_until_reset() {
     assert_eq!(p.parse(b"", false).unwrap_err(), FormError::Poisoned);
     p.reset(Boundary::new(b"X").unwrap());
     let step = p.parse(b"--X--", true).unwrap();
-    assert!(matches!(step.event, form_net::Event::End));
+    assert!(matches!(step.event, form_net::MultipartEvent::End));
 }

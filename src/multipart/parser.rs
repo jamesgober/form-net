@@ -94,12 +94,12 @@ impl Charset {
 /// happened.
 #[non_exhaustive]
 #[derive(Debug)]
-pub struct Step<'p> {
+pub struct MultipartStep<'p> {
     /// Bytes of the input consumed; pass the rest (and later new bytes) to
     /// the next call.
     pub consumed: usize,
     /// What happened.
-    pub event: Event<'p>,
+    pub event: MultipartEvent<'p>,
 }
 
 /// What the parser found.
@@ -110,7 +110,7 @@ pub struct Step<'p> {
 ///
 /// `Debug` prints the length of `Data`, never the bytes.
 #[non_exhaustive]
-pub enum Event<'p> {
+pub enum MultipartEvent<'p> {
     /// A part's headers were read and checked.
     PartStart(PartHead<'p>),
     /// Bytes of the current part's data.
@@ -123,7 +123,7 @@ pub enum Event<'p> {
     NeedInput,
 }
 
-impl fmt::Debug for Event<'_> {
+impl fmt::Debug for MultipartEvent<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PartStart(head) => f.debug_tuple("PartStart").field(head).finish(),
@@ -443,7 +443,7 @@ pub(crate) enum Outcome {
 /// The sans-IO `multipart/form-data` parser.
 ///
 /// Feed it bytes as they arrive, in chunks of any size split at any byte;
-/// it returns one [`Event`] per call and how many bytes it consumed. The
+/// it returns one [`MultipartEvent`] per call and how many bytes it consumed. The
 /// events are identical for every split of the same body. It never
 /// allocates after construction and never rescans a byte: the delimiter
 /// search is a streaming Knuth-Morris-Pratt automaton with an eight-byte skip
@@ -457,7 +457,7 @@ pub(crate) enum Outcome {
 /// # Examples
 ///
 /// ```
-/// use form_net::{Event, FormKind, Limits, MultipartParser, Policy};
+/// use form_net::{MultipartEvent, FormKind, Limits, MultipartParser, Policy};
 ///
 /// let content_type = b"multipart/form-data; boundary=X";
 /// let body = b"--X\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nHoliday\r\n--X--\r\n";
@@ -473,11 +473,11 @@ pub(crate) enum Outcome {
 ///         let step = parser.parse(rest, last)?;
 ///         rest = &rest[step.consumed..];
 ///         match step.event {
-///             Event::PartStart(head) => events.push(format!("start {}", head.name())),
-///             Event::Data(bytes) => events.push(format!("data {}", bytes.len())),
-///             Event::PartEnd(summary) => events.push(format!("end {}", summary.bytes)),
-///             Event::End => break,
-///             Event::NeedInput => break,
+///             MultipartEvent::PartStart(head) => events.push(format!("start {}", head.name())),
+///             MultipartEvent::Data(bytes) => events.push(format!("data {}", bytes.len())),
+///             MultipartEvent::PartEnd(summary) => events.push(format!("end {}", summary.bytes)),
+///             MultipartEvent::End => break,
+///             MultipartEvent::NeedInput => break,
 ///             _ => {}
 ///         }
 ///     }
@@ -633,9 +633,13 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     ///
     /// Every multipart error (see the crate's `docs/API.md`); `Poisoned`
     /// after any error until [`reset`](Self::reset).
-    pub fn parse<'p>(&'p mut self, input: &'p [u8], eof: bool) -> Result<Step<'p>, FormError> {
+    pub fn parse<'p>(
+        &'p mut self,
+        input: &'p [u8],
+        eof: bool,
+    ) -> Result<MultipartStep<'p>, FormError> {
         let (consumed, outcome) = self.advance(input, eof)?;
-        Ok(Step {
+        Ok(MultipartStep {
             consumed,
             event: self.view(outcome, input),
         })
@@ -1220,18 +1224,20 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     }
 
     /// Turns positions into borrowed events.
-    fn view<'p>(&'p self, outcome: Outcome, input: &'p [u8]) -> Event<'p> {
+    fn view<'p>(&'p self, outcome: Outcome, input: &'p [u8]) -> MultipartEvent<'p> {
         match outcome {
             Outcome::PartStart(facts, source) => {
-                Event::PartStart(self.head_view(&facts, source, input))
+                MultipartEvent::PartStart(self.head_view(&facts, source, input))
             }
-            Outcome::DataInput(start, end) => Event::Data(input.get(start..end).unwrap_or(&[])),
+            Outcome::DataInput(start, end) => {
+                MultipartEvent::Data(input.get(start..end).unwrap_or(&[]))
+            }
             Outcome::DataDelimiter(n) => {
-                Event::Data(self.boundary.delimiter().get(..n).unwrap_or(&[]))
+                MultipartEvent::Data(self.boundary.delimiter().get(..n).unwrap_or(&[]))
             }
-            Outcome::PartEnd(summary) => Event::PartEnd(summary),
-            Outcome::End => Event::End,
-            Outcome::NeedInput => Event::NeedInput,
+            Outcome::PartEnd(summary) => MultipartEvent::PartEnd(summary),
+            Outcome::End => MultipartEvent::End,
+            Outcome::NeedInput => MultipartEvent::NeedInput,
         }
     }
 
@@ -1551,8 +1557,8 @@ mod tests {
                         let step = p.parse(rest, last).unwrap();
                         rest = &rest[step.consumed..];
                         match step.event {
-                            Event::NeedInput => break,
-                            Event::End => {
+                            MultipartEvent::NeedInput => break,
+                            MultipartEvent::End => {
                                 ended = true;
                                 break;
                             }
@@ -1580,7 +1586,7 @@ mod tests {
                 Err(e) => return Some(e),
                 Ok(step) => {
                     rest = &rest[step.consumed..];
-                    if matches!(step.event, Event::End) {
+                    if matches!(step.event, MultipartEvent::End) {
                         return None;
                     }
                 }
@@ -1650,11 +1656,11 @@ mod tests {
         loop {
             let step = p.parse(rest, true).unwrap();
             rest = &rest[step.consumed..];
-            if let Event::PartStart(head) = &step.event {
+            if let MultipartEvent::PartStart(head) = &step.event {
                 seen.push_str(&alloc::format!("{:?}", head.headers()));
             }
             seen.push_str(&alloc::format!("{step:?}"));
-            if matches!(step.event, Event::End) {
+            if matches!(step.event, MultipartEvent::End) {
                 break;
             }
         }

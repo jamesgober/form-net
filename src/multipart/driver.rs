@@ -8,7 +8,7 @@ use crate::error::{EncodingError, FormError, Location};
 use crate::hook::{Inspector, Sink, Verdict};
 use crate::limits::EmptyFilePolicy;
 use crate::multipart::owned_head::OwnedPartHead;
-use crate::multipart::parser::{Event, MultipartParser, PartHead, PartKind, PartSummary};
+use crate::multipart::parser::{MultipartEvent, MultipartParser, PartHead, PartKind, PartSummary};
 use crate::wipe::WipeVec;
 
 /// What completed during a [`Driver::push`]. `Debug` shows a field's name
@@ -427,20 +427,22 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
             let step = self.parser.parse(rest, eof)?;
             pos = pos.saturating_add(step.consumed);
             let index = match &step.event {
-                Event::PartStart(head) => Some(head.index()),
+                MultipartEvent::PartStart(head) => Some(head.index()),
                 _ => parts.checked_sub(1),
             };
             let at = Location::in_part(index, seen.saturating_add(step.consumed as u64));
             let next = match step.event {
-                Event::PartStart(head) => self.state.on_start(&head, declared_ok, inspector, at)?,
-                Event::Data(bytes) => self.state.on_data(bytes, inspector, at)?,
-                Event::PartEnd(summary) => {
+                MultipartEvent::PartStart(head) => {
+                    self.state.on_start(&head, declared_ok, inspector, at)?
+                }
+                MultipartEvent::Data(bytes) => self.state.on_data(bytes, inspector, at)?,
+                MultipartEvent::PartEnd(summary) => {
                     if let Some(done) = self.on_end(summary, inspector)? {
                         return Ok((pos, done));
                     }
                     Next::Continue
                 }
-                Event::End => {
+                MultipartEvent::End => {
                     if !self.ended {
                         self.ended = true;
                         if let Verdict::Refuse(refusal) = inspector.end() {

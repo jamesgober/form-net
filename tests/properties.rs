@@ -5,7 +5,9 @@
 
 mod common;
 
-use form_net::{Boundary, Event, FormKind, Limits, MultipartParser, PercentPolicy, Policy};
+use form_net::{
+    Boundary, FormKind, Limits, MultipartEvent, MultipartParser, PercentPolicy, Policy,
+};
 use proptest::prelude::*;
 
 /// Bytes biased toward the ones the parsers care about.
@@ -126,8 +128,8 @@ proptest! {
                 let Ok(step) = parser.parse(rest, i + 1 == chunks.len()) else { break 'outer };
                 rest = &rest[step.consumed..];
                 match step.event {
-                    Event::Data(d) => prop_assert!(!d.is_empty()),
-                    Event::NeedInput | Event::End => break,
+                    MultipartEvent::Data(d) => prop_assert!(!d.is_empty()),
+                    MultipartEvent::NeedInput | MultipartEvent::End => break,
                     _ => {}
                 }
             }

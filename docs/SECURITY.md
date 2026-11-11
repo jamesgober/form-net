@@ -32,7 +32,7 @@ Every threat has an attack test named after it. Costs are per request unless sta
 | T-14 | differential with a WAF or proxy in front (WAFFLED) | refuse every construct readers disagree on: duplicate disposition, duplicate `name`, both file names, transfer encodings, bare LF, folding, whitespace before colon, `\"`, missing close delimiter, data past the epilogue budget | `test_attack_t14_waf_differential_shapes_refused` (`tests/attacks.rs`)<br>`test_attack_t14_waffled_mutations_are_refused_or_read_the_same` (`tests/waffled.rs`) | none on clean bodies |
 | T-15 | differential with browsers (refusing real forms) | browser capture corpus (NFR-14) | `test_attack_t15_browser_captures_parse_to_their_fields` (`tests/multipart_browsers.rs`) | none |
 | T-16 | `;` as a separator (Python CVE-2021-23336) | `&` only | `test_attack_t16_semicolon_is_not_a_separator` (`tests/attacks.rs`) | none |
-| T-17 | parameter pollution | order kept; `get_one`, `field_one`, typed extraction refuse duplicates; `get` documented as first-wins | `test_attack_t17_parameter_pollution_refused_by_strict_accessors` (`tests/attacks.rs`) | none |
+| T-17 | parameter pollution | order kept; `field_one` and typed extraction refuse duplicates; `field` documented as first-wins | `test_attack_t17_parameter_pollution_refused_by_strict_accessors` (`tests/attacks.rs`) | none |
 | T-18 | nested bracket names (Node multer CVE-2026-5079, CVE-2026-82333, CVE-2026-77078) | names opaque; `NamePath` (after 1.0) checks depth and index while scanning | `test_attack_t18_bracket_names_are_opaque` (`tests/attacks.rs`) | none |
 | T-19 | invalid encodings smuggling bytes | strict percent and UTF-8; never replace | `test_attack_t19_invalid_encodings_refused` (`tests/attacks.rs`) | none |
 | T-20 | file name traversal, absolute, UNC, streams, device names | names never paths; random spill names; `sanitized`; `persist` never overwrites | `test_attack_t20_t21_file_names_are_never_paths` (`tests/attacks_upload.rs`) | about 100 ns when `sanitized` is called |
@@ -88,7 +88,7 @@ Out of scope, named so nobody assumes otherwise: decompression bombs (the HTTP l
 | a parameter value that holds `name=` (`x="y;name=evil;"`, `filename="a; name=role;"`) | the value (RFC 6266), or the parameter itself (readers that search for `name=`, multer 3.1 among them) | refused (`MalformedParameter`) | D-136 |
 | a boundary starting or ending with `'` | the token itself, or the quoted text | refused (`InvalidBoundary`) | D-136 |
 | `filename` and `filename*` together | either one wins, by reader | refused (`BothFilenames`); `filename*` alone only by policy | D-014, FR-27 |
-| `filename*` alone under `Ignore` | a file to RFC 2231 readers | refused (`ExtendedFilename`), as under `Refuse` | D-147 |
+| `filename*` alone | a file to RFC 2231 readers | refused (`ExtendedFilename`) unless `AcceptAlone` reads it as a file; the `Ignore` policy that read it as a field is gone | D-147, D-148 |
 | a repeated `Content-Disposition` or parameter | first or last wins, by reader | refused | FR-26 |
 | header folding, whitespace before a colon, control bytes | accepted by some | refused | FR-25 |
 | `Content-Transfer-Encoding` other than identity | ignored by most | refused | T-26 |
@@ -201,11 +201,11 @@ Three independent reviews (DIRECTIVES, definition of done item 10), each of one 
 | low | a second `_charset_` field read differently by the buffered parser and `UploadSession`; `PartReader::text` ignored a skipped `_charset_` | one record, read before the part starts, D-141 |
 | low | `MultipartReader` never fed the epilogue, so its budget did not hold | the rest of the body is read, D-142 |
 | low | an aborted named spill gave its bytes back to the quota when the delete failed | kept reserved, as on drop, D-143 |
-| low | `Upload::parse_with` did not call `failed` on a setup error | called, D-144 |
+| low | `Upload::parse_with` (now `read_multipart_inspected`) did not call `failed` on a setup error | called, D-144 |
 | low | which error a body with two errors reported depended on the split (the body limit; a framing error against a budget) | parsed to the limit, data charged first, D-145 |
 | low | `Pairs` and `Serializer` `Debug` printed the body and the values written | redacted, D-146 |
 
-Decided after the review, in 0.9.2: under the opt-in `ExtendedFilenamePolicy::Ignore` a part with only `filename*` was a text field, where an RFC 2231 reader sees a file. It is refused now, as under `Refuse` (D-147); `Ignore` is deprecated, since a part with both file names was already refused under every policy. `tests/review_multipart_core.rs` holds it.
+Decided after the review, in 0.9.2: under the opt-in `ExtendedFilenamePolicy::Ignore` a part with only `filename*` was a text field, where an RFC 2231 reader sees a file. It is refused now, as under `Refuse` (D-147); `Ignore` was deprecated, since a part with both file names was already refused under every policy, and 0.10 removed it (D-148). `tests/review_multipart_core.rs` holds it.
 
 ### The streaming parser against a reference
 

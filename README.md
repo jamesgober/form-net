@@ -29,7 +29,7 @@
         <strong>MSRV is 1.85+</strong> (Rust 2024 edition). <code>#![forbid(unsafe_code)]</code>. No third-party dependencies apart from the audited <code>zeroize</code> and <code>subtle</code>, which first-party <code>crypt-io</code> brings for wiping secrets.
     </p>
     <blockquote>
-        <strong>Status: beta (<code>0.9.2</code>, a freeze candidate).</strong> Every item of the design is in; every threat in the threat model has an attack test, every fuzz target has run for 24 hours, and the upload soak shows no growth (<a href="./docs/SECURITY.md"><code>docs/SECURITY.md</code></a>). Every benchmark family runs at least 20% faster than the best other Rust form parser, with one short input level (<a href="./docs/PERFORMANCE.md"><code>docs/PERFORMANCE.md</code></a>). The anti-forgery check and a per-route refusal digest are in for the framework to use, the polish pass has tried every accepted gap again, and an adversarial review's 18 findings are fixed (<a href="./dev/READINESS-1.0.md"><code>dev/READINESS-1.0.md</code></a>). web-net runs the first site's routes on it. Next: customs-sec as the inspector and two weeks on a deployed site. The contract is <a href="./docs/API.md"><code>docs/API.md</code></a>; the schedule is <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
+        <strong>Status: beta (<code>0.10.0</code>).</strong> Every item of the design is in; every threat in the threat model has an attack test, every fuzz target has run for 24 hours, and the upload soak shows no growth (<a href="./docs/SECURITY.md"><code>docs/SECURITY.md</code></a>). Every benchmark family runs at least 20% faster than the best other Rust form parser, with one short input level (<a href="./docs/PERFORMANCE.md"><code>docs/PERFORMANCE.md</code></a>). The anti-forgery check and a per-route refusal digest are in for the framework to use, the polish pass has tried every accepted gap again, an adversarial review's 18 findings are fixed, and a simplicity audit gave every lookup one name (<a href="./dev/READINESS-1.0.md"><code>dev/READINESS-1.0.md</code></a>). web-net runs the first site's routes on it. Next: customs-sec as the inspector and two weeks on a deployed site. The contract is <a href="./docs/API.md"><code>docs/API.md</code></a>; the schedule is <a href="./dev/ROADMAP.md"><code>dev/ROADMAP.md</code></a>.
     </blockquote>
 </div>
 
@@ -65,7 +65,7 @@ The plan for 1.0. Each item names the version that ships it.
 
 ```toml
 [dependencies]
-form-net = { version = "0.9", features = ["fs"] }
+form-net = { version = "0.10", features = ["fs"] }
 ```
 
 The `fs` feature adds upload storage; the default features cover parsing, hooks, readers, and typed forms. Without default features the crate is `no_std` and needs no allocator: the allocation-free core (`raw_pairs`, `decode_into`, `MultipartParser::with_buffer`) works on any target. Add `features = ["alloc"]` for the owned results.
@@ -83,11 +83,11 @@ use form_net as fnet;
 
 // A urlencoded body (0.3)
 let form = fnet::parse_urlencoded(b"email=a%40b.example&remember=on")?;
-assert_eq!(form.get("email"), Some("a@b.example"));
+assert_eq!(form.field("email"), Some("a@b.example"));
 
 // A query string (0.3)
 let query = fnet::parse_query(b"?q=rust+forms&page=2")?;
-assert_eq!(query.get("q"), Some("rust forms"));
+assert_eq!(query.field("q"), Some("rust forms"));
 
 // A buffered multipart body (0.3)
 let mp = fnet::parse_multipart(content_type, body)?;

@@ -122,7 +122,18 @@ Exit: every item accepted, deferred, or missed earlier in the series has been tr
 - [x] The security and edge-case review run again over the whole crate, with every finding fixed test-first (D-128 to D-131, `tests/skip_parity.rs`, `tests/memory_bound.rs`).
 - [x] The 1.0 readiness note for James: `dev/READINESS-1.0.md`.
 
-## v0.9.x - Beta and release candidates
+## v0.10.0 - Simplicity (DONE 2026-11-11)
+
+Exit: the public API checked against the portfolio's API design rules before 1.0, every finding fixed or kept with its reason (D-148).
+
+- [x] Tier 1 checked: one call each for the common cases, plain `?`, no builder.
+- [x] One name per lookup (`Form::field`), one pattern per entry point (`read_multipart_with`, `read_multipart_inspected`), parser types named by parser (`MultipartStep`, `MultipartEvent`), one policy per behaviour (`ExtendedFilenamePolicy::Ignore` removed).
+- [x] `docs/API.md` in the reference layout, every public item.
+- [x] Migration note in `docs/release/v0.10.0.md`; web-net needs no change.
+
+## v0.10.x - Beta and release candidates
+
+0.9.1 and 0.9.2 were the first freeze candidates; 0.10.0 changed the API, so the candidates continue as 0.10.x.
 
 Exit: one release candidate with no change for two weeks of use by web-net and customs-sec.
 
@@ -130,7 +141,7 @@ Exit: one release candidate with no change for two weeks of use by web-net and c
   - [x] web-net runs both routes on 0.9.0 with csrf-sec through `TokenCheck`, with no API change (D-134; web-net `tests/actions.rs`, `examples/site.rs`).
   - [ ] customs-sec as the `Inspector` (a test double today).
   - [ ] Two weeks on a deployed site (James).
-- [ ] API freeze candidates `0.9.x`; fixes only. `0.9.1` is the first (after the adversarial review), `0.9.2` the second (D-147); the two weeks start when customs-sec and the deployment are in.
+- [ ] API freeze candidates; fixes only. `0.9.1` and `0.9.2` came first; after the 0.10 API change the candidates are `0.10.x`, and the two weeks start when customs-sec and the deployment are in.
 - [ ] Absolute times measured again on a quiet machine, against `benches/baseline/2026-10-30`; the 0.9.0 pass could only measure ratios reliably (the machine stayed at 100% load).
 - [x] Adversarial review (DIRECTIVES definition of done, item 10) with every finding fixed test-first: three independent reviews, 18 findings (one high), each fixed against its failing test (D-136 to D-146, `docs/SECURITY.md`).
 - [x] `docs/STABILITY-1.0.md` drafted (0.9.1): the frozen surface, the reading contract (accepted bodies read the same; refusals never loosened; new refusals only for reader disagreements), MSRV, and the audit table.

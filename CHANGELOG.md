@@ -13,6 +13,28 @@
 
 ---
 
+## [0.10.0] - 2026-11-11
+
+Simplicity: one name for each lookup, one pattern for each entry point.
+Breaking; the migration is a rename, listed below (D-148).
+
+### Changed
+
+- `Form::get`, `get_one`, `get_all` are `field`, `field_one`, `fields`,
+  as on `Multipart` and `Upload`.
+- `Upload::parse_with` is `read_multipart_inspected`; `read_multipart_with`
+  is the same without an inspector.
+- The multipart parser's `Step` and `Event` are `MultipartStep` and
+  `MultipartEvent`.
+- `docs/API.md` in the reference layout, every public item.
+
+### Removed
+
+- `ExtendedFilenamePolicy::Ignore`, deprecated in 0.9.2; it refused what
+  `Refuse` refuses. Use `Refuse`.
+
+---
+
 ## [0.9.2] - 2026-11-09
 
 A freeze candidate: the one review finding left for a decision.
@@ -414,7 +436,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/jamesgober/form-net/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/jamesgober/form-net/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/jamesgober/form-net/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/jamesgober/form-net/compare/v0.8.0...v0.9.0

@@ -187,7 +187,7 @@ The polish pass (D-112) reran every family against the competitors at their curr
 | search query, `raw_pairs` + `decode_into` | 0.91x | 1.55x | the same |
 | search query, `pairs` iterating | 0.94x | 1.05x | within the spread of a loaded run; still level, see above |
 | near-miss 1 MiB, whole | 1.23x | 1.39x | the margin that was thin; range over five runs 1.35x to 1.85x |
-| `Form::get`, the last of 10 fields | 7 ns per field | 3.4 ns per field | names compared as bytes (D-127), from the `estimates` binary |
+| `Form::field` (`get` before 0.10), the last of 10 fields | 7 ns per field | 3.4 ns per field | names compared as bytes (D-127), from the `estimates` binary |
 
 The 1 MiB escaped body still depends on code placement under the default bench profile (D-117, D-133); the crate's own release profile reads it steady. The text-check move (D-128) and the bounded arena (D-130) cost nothing measurable: the buffered family's login and avatar rows moved from 1.31x and 1.44x to 1.37x and 1.72x.
 

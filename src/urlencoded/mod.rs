@@ -41,10 +41,10 @@ mod owned {
     ///
     /// ```
     /// let form = form_net::parse_urlencoded(b"role=user&role=admin&tag=red&tag=blue")?;
-    /// assert_eq!(form.get("role"), Some("user"));                 // first wins
-    /// assert!(form.get_one("role").is_err());                     // strict
-    /// assert_eq!(form.get_one("missing")?, None);
-    /// assert_eq!(form.get_all("tag").collect::<Vec<_>>(), ["red", "blue"]);
+    /// assert_eq!(form.field("role"), Some("user"));                 // first wins
+    /// assert!(form.field_one("role").is_err());                     // strict
+    /// assert_eq!(form.field_one("missing")?, None);
+    /// assert_eq!(form.fields("tag").collect::<Vec<_>>(), ["red", "blue"]);
     /// assert_eq!(form.iter().count(), 4);
     /// assert_eq!(
     ///     format!("{form:?}"),
@@ -87,19 +87,19 @@ mod owned {
         }
 
         /// The first value given for `name`, as browsers'
-        /// `URLSearchParams.get` returns. Use [`get_one`](Self::get_one) where a
+        /// `URLSearchParams.get` returns. Use [`field_one`](Self::field_one) where a
         /// repeated name must be refused.
         ///
         /// # Examples
         ///
         /// ```
         /// let form = form_net::parse_urlencoded(b"email=a%40b.example")?;
-        /// assert_eq!(form.get("email"), Some("a@b.example"));
-        /// assert_eq!(form.get("other"), None);
+        /// assert_eq!(form.field("email"), Some("a@b.example"));
+        /// assert_eq!(form.field("other"), None);
         /// # Ok::<(), form_net::FormError>(())
         /// ```
         #[must_use]
-        pub fn get(&self, name: &str) -> Option<&str> {
+        pub fn field(&self, name: &str) -> Option<&str> {
             self.spans
                 .iter()
                 .find(|s| self.is_named(s, name))
@@ -117,11 +117,11 @@ mod owned {
         ///
         /// ```
         /// let form = form_net::parse_urlencoded(b"a=1&b=2&b=3")?;
-        /// assert_eq!(form.get_one("a")?, Some("1"));
-        /// assert!(form.get_one("b").is_err());
+        /// assert_eq!(form.field_one("a")?, Some("1"));
+        /// assert!(form.field_one("b").is_err());
         /// # Ok::<(), form_net::FormError>(())
         /// ```
-        pub fn get_one(&self, name: &str) -> Result<Option<&str>, FormError> {
+        pub fn field_one(&self, name: &str) -> Result<Option<&str>, FormError> {
             let mut found = None;
             for s in &self.spans {
                 if self.is_named(s, name) {
@@ -143,10 +143,10 @@ mod owned {
         ///
         /// ```
         /// let form = form_net::parse_urlencoded(b"t=a&x=1&t=b")?;
-        /// assert_eq!(form.get_all("t").collect::<Vec<_>>(), ["a", "b"]);
+        /// assert_eq!(form.fields("t").collect::<Vec<_>>(), ["a", "b"]);
         /// # Ok::<(), form_net::FormError>(())
         /// ```
-        pub fn get_all<'f>(&'f self, name: &'f str) -> impl Iterator<Item = &'f str> + 'f {
+        pub fn fields<'f>(&'f self, name: &'f str) -> impl Iterator<Item = &'f str> + 'f {
             self.spans
                 .iter()
                 .filter(move |s| self.is_named(s, name))
@@ -320,11 +320,11 @@ mod owned {
     ///
     /// ```
     /// let form = form_net::parse_urlencoded(b"email=a%40b.example&remember=on")?;
-    /// assert_eq!(form.get("email"), Some("a@b.example"));
-    /// assert_eq!(form.get("remember"), Some("on"));
+    /// assert_eq!(form.field("email"), Some("a@b.example"));
+    /// assert_eq!(form.field("remember"), Some("on"));
     ///
     /// let form = form_net::parse_urlencoded(b"a=1;b=2")?;
-    /// assert_eq!(form.get("a"), Some("1;b=2"));
+    /// assert_eq!(form.field("a"), Some("1;b=2"));
     ///
     /// assert!(form_net::parse_urlencoded(b"name=%zz").is_err());
     /// assert!(form_net::parse_urlencoded(b"name=%C0%AF").is_err());
@@ -345,8 +345,8 @@ mod owned {
     ///
     /// ```
     /// let q = form_net::parse_query(b"?q=rust+forms&page=2")?;
-    /// assert_eq!(q.get("q"), Some("rust forms"));
-    /// assert_eq!(form_net::parse_query(b"??q=x")?.get("?q"), Some("x"));
+    /// assert_eq!(q.field("q"), Some("rust forms"));
+    /// assert_eq!(form_net::parse_query(b"??q=x")?.field("?q"), Some("x"));
     /// # Ok::<(), form_net::FormError>(())
     /// ```
     pub fn parse_query(query: &[u8]) -> Result<Form, FormError> {
@@ -372,7 +372,7 @@ mod owned {
     ///
     /// const LIKE_BROWSERS: Policy = Policy::DEFAULT.with_percent(PercentPolicy::Literal);
     /// let form = form_net::parse_urlencoded_with(b"discount=100%", &Limits::DEFAULT, &LIKE_BROWSERS)?;
-    /// assert_eq!(form.get("discount"), Some("100%"));
+    /// assert_eq!(form.field("discount"), Some("100%"));
     /// # Ok::<(), form_net::FormError>(())
     /// ```
     pub fn parse_urlencoded_with(
@@ -617,7 +617,7 @@ mod owned {
         fn test_form_two_allocations_sizes() {
             let form = parse_urlencoded(b"a=%41%42&b=c").unwrap();
             assert_eq!(form.arena.len(), 5);
-            assert_eq!(form.get("a"), Some("AB"));
+            assert_eq!(form.field("a"), Some("AB"));
         }
     }
 }

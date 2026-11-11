@@ -227,7 +227,7 @@ pub(crate) mod tests {
         let body = b"--X\r\nContent-Disposition: form-data; name=csrf\r\n\r\ntok\r\n--X\r\nContent-Disposition: form-data; name=pin\r\n\r\n1234\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.png\r\n\r\nsecret\r\n--X--";
         let policy = crate::Policy::DEFAULT.with_token_field(crate::TokenField::new("csrf"));
         let store = crate::Store::memory_only();
-        let mut up = crate::Upload::parse_with(
+        let mut up = crate::read_multipart_inspected(
             ct,
             &body[..],
             &crate::Limits::DEFAULT,

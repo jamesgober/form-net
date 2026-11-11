@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use form_net::{Boundary, Event, FormError, Limits, MultipartParser, PartKind, Policy};
+use form_net::{Boundary, FormError, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
 
 /// What a part was, with its data joined.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,7 +33,7 @@ pub fn drive(
             let step = parser.parse(rest, last)?;
             rest = &rest[step.consumed..];
             match step.event {
-                Event::PartStart(head) => {
+                MultipartEvent::PartStart(head) => {
                     assert!(current.is_none(), "part started inside a part");
                     current = Some(Record {
                         name: head.name().to_owned(),
@@ -42,7 +42,7 @@ pub fn drive(
                         data: Vec::new(),
                     });
                 }
-                Event::Data(bytes) => {
+                MultipartEvent::Data(bytes) => {
                     assert!(!bytes.is_empty(), "empty Data event");
                     current
                         .as_mut()
@@ -50,21 +50,21 @@ pub fn drive(
                         .data
                         .extend_from_slice(bytes);
                 }
-                Event::PartEnd(summary) => {
+                MultipartEvent::PartEnd(summary) => {
                     let rec = current.take().expect("end outside a part");
                     assert_eq!(summary.bytes, rec.data.len() as u64);
                     out.push(rec);
                 }
-                Event::End => {
+                MultipartEvent::End => {
                     done = true;
                     if !rest.is_empty() {
                         let step = parser.parse(rest, last)?;
-                        assert!(matches!(step.event, Event::End));
+                        assert!(matches!(step.event, MultipartEvent::End));
                         assert_eq!(step.consumed, rest.len());
                     }
                     break;
                 }
-                Event::NeedInput => {
+                MultipartEvent::NeedInput => {
                     assert!(rest.is_empty(), "NeedInput with bytes left");
                     break;
                 }
@@ -75,7 +75,7 @@ pub fn drive(
             // Remaining chunks are epilogue: feed them too.
             for (j, more) in chunks.iter().enumerate().skip(i + 1) {
                 let step = parser.parse(more, j + 1 == chunks.len())?;
-                assert!(matches!(step.event, Event::End));
+                assert!(matches!(step.event, MultipartEvent::End));
             }
             break;
         }

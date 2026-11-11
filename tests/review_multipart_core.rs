@@ -183,15 +183,15 @@ fn test_multipart_reader_skips_epilogue_budget() {
 /// Reported by the review, decided after it (D-147): under
 /// `ExtendedFilenamePolicy::Ignore` a part with only `filename*` was a text
 /// field, where an RFC 2231 reader (Go's `mime/multipart`, an inspection
-/// layer) sees a file. It is refused as under `Refuse`; a plain `filename`
-/// still makes a file.
+/// layer) sees a file. 0.9.2 refused it; 0.10 removed `Ignore`, which then
+/// did what `Refuse` does (D-148). Under the default the part is refused,
+/// and a plain `filename` still makes a file.
 #[test]
-#[allow(deprecated)]
-fn test_ignore_policy_refuses_a_part_with_only_extended_filename() {
-    let ignore = Policy::DEFAULT.with_extended_filename(form_net::ExtendedFilenamePolicy::Ignore);
+fn test_a_part_with_only_extended_filename_is_refused_by_default() {
+    let policy = Policy::DEFAULT;
     let only_ext =
         b"--X\r\nContent-Disposition: form-data; name=\"f\"; filename*=UTF-8''a.php\r\n\r\nx\r\n--X--";
-    let got = form_net::parse_multipart_with(CT, only_ext, &Limits::DEFAULT, &ignore);
+    let got = form_net::parse_multipart_with(CT, only_ext, &Limits::DEFAULT, &policy);
     assert_eq!(
         got.map(|mp| mp.parts().len()).map_err(|e| e.code()),
         Err("policy.extended_filename"),
@@ -199,6 +199,6 @@ fn test_ignore_policy_refuses_a_part_with_only_extended_filename() {
     );
     let plain =
         b"--X\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a.png\"\r\n\r\nx\r\n--X--";
-    let mp = form_net::parse_multipart_with(CT, plain, &Limits::DEFAULT, &ignore).unwrap();
+    let mp = form_net::parse_multipart_with(CT, plain, &Limits::DEFAULT, &policy).unwrap();
     assert!(mp.parts()[0].is_file());
 }

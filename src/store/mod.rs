@@ -348,7 +348,7 @@ impl Store {
     /// let quota = SpillQuota::new(4);
     /// let store = Store::temp()?.memory_threshold(0).quota(quota.clone());
     /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a\r\n\r\n12345\r\n--X--";
-    /// let e = Upload::parse_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store, &mut NoInspector).unwrap_err();
+    /// let e = form_net::read_multipart_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store).unwrap_err();
     /// assert_eq!(e.status_hint(), 503);
     /// assert_eq!(quota.in_use(), 0, "the refused file gave its bytes back");
     /// # Ok::<(), form_net::FormError>(())
@@ -1165,68 +1165,6 @@ impl Upload {
     pub fn file_count(&self) -> usize {
         self.files.len()
     }
-
-    /// Reads a whole multipart body from `reader` in 64 KiB chunks, with
-    /// explicit limits, policy, store, and inspector.
-    ///
-    /// # Errors
-    ///
-    /// Every multipart error; `Refused`; `Io { kind }`; `Store { .. }`;
-    /// `Limit { Disk }`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use form_net::{Limits, NoInspector, Policy, Store, TokenField, Upload};
-    ///
-    /// let store = Store::temp()?;
-    /// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf_token"));
-    /// let body = b"--X\r\nContent-Disposition: form-data; name=csrf_token\r\n\r\ntok\r\n--X--";
-    /// let upload = Upload::parse_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &policy, &store, &mut NoInspector)?;
-    /// assert_eq!(upload.captured_token(), Some("tok"));
-    /// # Ok::<(), form_net::FormError>(())
-    /// ```
-    pub fn parse_with<R: Read, I: Inspector>(
-        content_type: &[u8],
-        mut reader: R,
-        limits: &Limits,
-        policy: &Policy,
-        store: &Store,
-        inspector: &mut I,
-    ) -> Result<Upload, FormError> {
-        // `failed` on every failed parse, setup included, as the buffered
-        // entry points call it (D-043, D-144).
-        let mut session = match UploadSession::new(content_type, limits, policy, store) {
-            Ok(s) => s,
-            Err(e) => {
-                inspector.failed(&e);
-                return Err(e);
-            }
-        };
-        let mut buf = crate::wipe::ReadBuf::new(64 * 1024);
-        loop {
-            let n = match reader.read(&mut buf.buf) {
-                Ok(n) => n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
-                    buf.failed();
-                    continue;
-                }
-                Err(e) => {
-                    buf.failed();
-                    let err = temp::io(&e);
-                    inspector.failed(&err);
-                    return Err(err);
-                }
-            };
-            if n == 0 {
-                break;
-            }
-            buf.filled(n);
-            session.push(buf.buf.get(..n).unwrap_or(&[]), inspector)?;
-        }
-        drop(buf);
-        session.finish(inspector)
-    }
 }
 
 /// The push-style form for event-driven servers: hand each body chunk to
@@ -1411,14 +1349,122 @@ impl UploadSession {
 /// ```
 pub fn read_multipart<R: Read>(content_type: &[u8], body: R) -> Result<Upload, FormError> {
     let store = Store::temp_lazy();
-    Upload::parse_with(
+    read_multipart_with(
         content_type,
         body,
         &Limits::DEFAULT,
         &Policy::DEFAULT,
         &store,
+    )
+}
+
+/// [`read_multipart`] with explicit limits, policy, and store: reads the
+/// whole body from `body` in 64 KiB chunks (replaces `Upload::parse_with`,
+/// D-148).
+///
+/// # Errors
+///
+/// Every multipart error; `Io { kind }`; `Store { .. }`; `Limit { Disk }`;
+/// `InvalidLimits`.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Limits, Policy, Store, TokenField};
+///
+/// let store = Store::temp()?;
+/// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf_token"));
+/// let body = b"--X\r\nContent-Disposition: form-data; name=csrf_token\r\n\r\ntok\r\n--X--";
+/// let upload = form_net::read_multipart_with(
+///     b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &policy, &store,
+/// )?;
+/// assert_eq!(upload.captured_token(), Some("tok"));
+/// # Ok::<(), form_net::FormError>(())
+/// ```
+pub fn read_multipart_with<R: Read>(
+    content_type: &[u8],
+    body: R,
+    limits: &Limits,
+    policy: &Policy,
+    store: &Store,
+) -> Result<Upload, FormError> {
+    read_multipart_inspected(
+        content_type,
+        body,
+        limits,
+        policy,
+        store,
         &mut crate::NoInspector,
     )
+}
+
+/// [`read_multipart_with`] with an inspector: every part passes through it
+/// in the hook order, before any file reaches the store. `failed` is called
+/// once on every failed read, setup errors included (D-144).
+///
+/// # Errors
+///
+/// Every multipart error; `Refused`; `Io { kind }`; `Store { .. }`;
+/// `Limit { Disk }`; `InvalidLimits`.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Limits, Policy, Store, TokenCheck, TokenField};
+///
+/// let store = Store::temp()?;
+/// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf_token"));
+/// let mut check = TokenCheck::new("csrf_token", |t| {
+///     if t == "tok" { Ok(()) } else { Err(form_net::Refusal::new(403, "csrf.bad")) }
+/// });
+/// let body = b"--X\r\nContent-Disposition: form-data; name=csrf_token\r\n\r\ntok\r\n--X--";
+/// let upload = form_net::read_multipart_inspected(
+///     b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &policy, &store, &mut check,
+/// )?;
+/// assert!(check.verified());
+/// assert_eq!(upload.captured_token(), Some("tok"));
+/// # Ok::<(), form_net::FormError>(())
+/// ```
+pub fn read_multipart_inspected<R: Read, I: Inspector>(
+    content_type: &[u8],
+    mut reader: R,
+    limits: &Limits,
+    policy: &Policy,
+    store: &Store,
+    inspector: &mut I,
+) -> Result<Upload, FormError> {
+    // `failed` on every failed parse, setup included, as the buffered
+    // entry points call it (D-043, D-144).
+    let mut session = match UploadSession::new(content_type, limits, policy, store) {
+        Ok(s) => s,
+        Err(e) => {
+            inspector.failed(&e);
+            return Err(e);
+        }
+    };
+    let mut buf = crate::wipe::ReadBuf::new(64 * 1024);
+    loop {
+        let n = match reader.read(&mut buf.buf) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                buf.failed();
+                continue;
+            }
+            Err(e) => {
+                buf.failed();
+                let err = temp::io(&e);
+                inspector.failed(&err);
+                return Err(err);
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        buf.filled(n);
+        session.push(buf.buf.get(..n).unwrap_or(&[]), inspector)?;
+    }
+    drop(buf);
+    session.finish(inspector)
 }
 
 impl FileName<'_> {
