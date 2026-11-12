@@ -297,6 +297,18 @@ mod writer_std {
         /// # Errors
         ///
         /// `Random` when the OS random source fails.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// let mut w = form_net::MultipartWriter::new(Vec::new())?;
+        /// w.text("title", "Holiday")?;
+        /// let content_type = w.content_type();
+        /// let body = w.finish()?;
+        /// let mp = form_net::parse_multipart(content_type.as_bytes(), &body)?;
+        /// assert_eq!(mp.field("title"), Some("Holiday"));
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         #[cfg(feature = "random")]
         #[cfg_attr(docsrs, doc(cfg(feature = "random")))]
         pub fn new(out: W) -> Result<Self, FormError> {
@@ -307,6 +319,18 @@ mod writer_std {
         }
 
         /// A writer with the caller's boundary; data is scanned for it.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let mut w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"X")?);
+        /// w.text("a", "1")?;
+        /// let body = w.finish()?;
+        /// assert_eq!(body, b"--X\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--X--\r\n");
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         pub fn with_boundary(out: W, boundary: Boundary) -> Self {
             MultipartWriter {
                 out,
@@ -322,6 +346,16 @@ mod writer_std {
         }
 
         /// The boundary.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"form-net-x")?);
+        /// assert_eq!(w.boundary().as_bytes(), b"form-net-x");
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         pub const fn boundary(&self) -> &Boundary {
             &self.boundary
         }
@@ -329,6 +363,19 @@ mod writer_std {
         /// The `Content-Type` header value to send:
         /// `multipart/form-data; boundary=...`, quoted when the boundary
         /// holds a character that is not a token character.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"abc")?);
+        /// assert_eq!(w.content_type(), "multipart/form-data; boundary=abc");
+        /// // A space is not a token character: the boundary is quoted.
+        /// let w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"a b")?);
+        /// assert_eq!(w.content_type(), "multipart/form-data; boundary=\"a b\"");
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         #[must_use]
         pub fn content_type(&self) -> String {
             let b = self.boundary.as_bytes();
@@ -343,6 +390,18 @@ mod writer_std {
 
         /// Turns the delimiter scan on or off. It is on for a caller
         /// boundary and off for a generated one.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let mut w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"X")?);
+        /// w.verify_boundary(true);
+        /// let err = w.text("a", "1\r\n--X").unwrap_err();
+        /// assert_eq!(err.code(), "syntax.boundary_in_content");
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         pub fn verify_boundary(&mut self, on: bool) {
             self.verify = on;
         }
@@ -357,6 +416,19 @@ mod writer_std {
         /// `Syntax { BoundaryInContent }`; `Encoding { UnsupportedCharset }`
         /// for a `_charset_` field naming anything but UTF-8 or US-ASCII
         /// (the text after it would not read back); `Io`; `Poisoned`.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let mut w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"X")?);
+        /// w.text("note", "line 1\nline 2")?;
+        /// let body = w.finish()?;
+        /// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", &body)?;
+        /// assert_eq!(mp.field("note"), Some("line 1\r\nline 2"));
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         pub fn text(&mut self, name: &str, value: &str) -> Result<(), FormError> {
             self.guard(|w| {
                 if name == "_charset_"
@@ -402,6 +474,20 @@ mod writer_std {
         /// # Errors
         ///
         /// As [`text`](Self::text), without the charset rule.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let mut w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"X")?);
+        /// w.file_start("doc", "a.txt", Some("text/plain"))?;
+        /// w.file_data(b"hello")?;
+        /// let body = w.finish()?;
+        /// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", &body)?;
+        /// assert_eq!(mp.file("doc").map(|p| p.bytes()), Some(&b"hello"[..]));
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         pub fn file_start(
             &mut self,
             name: &str,
@@ -421,6 +507,22 @@ mod writer_std {
         ///
         /// `Syntax { BoundaryInContent }`; `Io`; `Poisoned` outside a file
         /// part.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let mut w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"X")?);
+        /// w.file_start("log", "log.txt", None)?;
+        /// for chunk in [&b"part one, "[..], b"part two"] {
+        ///     w.file_data(chunk)?;
+        /// }
+        /// let body = w.finish()?;
+        /// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", &body)?;
+        /// assert_eq!(mp.file("log").map(|p| p.bytes()), Some(&b"part one, part two"[..]));
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         pub fn file_data(&mut self, chunk: &[u8]) -> Result<(), FormError> {
             if !self.in_file {
                 self.poisoned = true;
@@ -435,6 +537,20 @@ mod writer_std {
         ///
         /// As [`file_start`](Self::file_start) and
         /// [`file_data`](Self::file_data); `Io` from `data`.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let mut w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"X")?);
+        /// let len = w.file("photo", "beach.jpg", Some("image/jpeg"), &b"\xff\xd8 jpeg"[..])?;
+        /// assert_eq!(len, 7);
+        /// let body = w.finish()?;
+        /// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", &body)?;
+        /// assert_eq!(mp.file("photo").map(|p| p.bytes()), Some(&b"\xff\xd8 jpeg"[..]));
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         pub fn file<R: Read>(
             &mut self,
             name: &str,
@@ -469,6 +585,18 @@ mod writer_std {
         /// # Errors
         ///
         /// `Io`; `Poisoned`.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{Boundary, MultipartWriter};
+        ///
+        /// let mut w = MultipartWriter::with_boundary(Vec::new(), Boundary::new(b"X")?);
+        /// w.text("a", "1")?;
+        /// let body = w.finish()?;
+        /// assert!(body.ends_with(b"\r\n--X--\r\n"));
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         pub fn finish(mut self) -> Result<W, FormError> {
             self.guard(|w| {
                 let mut out = IoOut(&mut w.out);

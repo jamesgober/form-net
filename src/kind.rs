@@ -67,12 +67,32 @@ pub(crate) fn has_empty_parameter(s: &[u8]) -> bool {
     false
 }
 
-/// Whether a parameter value holds `name=` in any ASCII case. Readers that
-/// find `name=` and `filename=` by substring search (multer 3.1, the reader
-/// behind axum) take it for the parameter itself and read another field
-/// name, or a file where form-net reads a field (D-136).
+/// Whether a parameter value holds `name=` or `filename=`, in any ASCII
+/// case, where a reader that splits the header on `;` or whitespace would
+/// take it for a parameter: at the start of the value or after `;`, `,`,
+/// SP, or HTAB. multer 3.1 (the reader behind axum) reads another field
+/// name there, or a file where form-net reads a field (D-136). After a
+/// letter it does not, so a file name like `Surname=Smith.pdf` is accepted
+/// (D-152, checked by running multer).
 pub(crate) fn holds_name_assignment(value: &[u8]) -> bool {
-    value.contains(&b'=') && value.windows(5).any(|w| w.eq_ignore_ascii_case(b"name="))
+    if !value.contains(&b'=') {
+        return false;
+    }
+    let at = |i: usize| {
+        let rest = value.get(i..).unwrap_or(&[]);
+        let starts = |p: &[u8]| {
+            rest.get(..p.len())
+                .is_some_and(|r| r.eq_ignore_ascii_case(p))
+        };
+        starts(b"name=") || starts(b"filename=")
+    };
+    if at(0) {
+        return true;
+    }
+    value
+        .iter()
+        .enumerate()
+        .any(|(i, &b)| matches!(b, b';' | b',' | b' ' | b'\t') && at(i.wrapping_add(1)))
 }
 
 /// The bytes of a parameter value as sent: a token, or the content of a
@@ -114,7 +134,7 @@ impl FormKind {
     /// bytes; it never looks at the body.
     ///
     /// `application/x-www-form-urlencoded` is accepted with any parameters
-    /// except a `charset` other than UTF-8 or US-ASCII. `multipart/form-data`
+    /// except a `charset` other than UTF-8. `multipart/form-data`
     /// needs exactly one valid `boundary`. Everything else, including
     /// `text/plain`, is `UnsupportedMediaType`. A repeated parameter, an
     /// empty parameter (`;;`), and an extended parameter (`boundary*`,
@@ -187,7 +207,10 @@ impl FormKind {
         }
         if urlencoded {
             if let Some(cs) = params.get("charset") {
-                if !(cs.eq_ignore_ascii_case(b"utf-8") || cs.eq_ignore_ascii_case(b"us-ascii")) {
+                // UTF-8 only: the urlencoded parser does not see this label,
+                // and WHATWG readers decode `us-ascii` as windows-1252, so a
+                // `%E9` would read two ways (D-150).
+                if !cs.eq_ignore_ascii_case(b"utf-8") {
                     return Err(FormError::encoding(
                         EncodingError::UnsupportedCharset,
                         Location::at(0),
@@ -233,7 +256,7 @@ mod tests {
             b"APPLICATION/X-WWW-FORM-URLENCODED",
             b"application/x-www-form-urlencoded; charset=UTF-8",
             b"application/x-www-form-urlencoded; charset=\"utf-8\"",
-            b"application/x-www-form-urlencoded; charset=us-ascii; other=1",
+            b"application/x-www-form-urlencoded; charset=utf-8; other=1",
             b"  application/x-www-form-urlencoded  ",
         ] {
             assert_eq!(FormKind::detect(ct), Ok(FormKind::Urlencoded), "{ct:?}");

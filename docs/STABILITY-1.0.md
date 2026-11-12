@@ -1,6 +1,6 @@
 # form-net 1.0 stability contract
 
-**Status: draft (0.10.0).** This is what `form-net 1.0.0` will commit to, written before the freeze so the release candidates can be checked against it. It takes effect when 1.0.0 ships, on James's decision, after the audit recorded at the end of this file.
+**Status: draft (0.11.0).** This is what `form-net 1.0.0` will commit to, written before the freeze so the release candidates can be checked against it. It takes effect when 1.0.0 ships, on James's decision, after the audit recorded at the end of this file.
 
 ---
 
@@ -94,4 +94,5 @@ To be recorded here before 1.0.0 (DIRECTIVES, section 3): API, docs, tests, benc
 | Use by customs-sec as the inspector | open |
 | Two weeks on a deployed site | open |
 | Simplicity audit (one call per common use, one name per thing) | done, 0.10.0 (D-148) |
+| Independent review of the whole crate | done, 0.11.0: 1 medium, 8 low, each fixed with a test (D-149 to D-161) |
 | This contract | draft; final text at 1.0 |

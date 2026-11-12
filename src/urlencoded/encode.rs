@@ -179,12 +179,31 @@ mod owned {
 
     impl<'s> Serializer<'s> {
         /// A serializer that appends to `out`.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// let mut out = String::from("x=1&");
+        /// let mut s = form_net::Serializer::new(&mut out);
+        /// s.append_pair("y", "2");
+        /// assert_eq!(out, "x=1&y=2");
+        /// ```
         #[must_use]
         pub fn new(out: &'s mut String) -> Serializer<'s> {
             Serializer { out, first: true }
         }
 
         /// Appends one pair.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// let mut out = String::new();
+        /// form_net::Serializer::new(&mut out)
+        ///     .append_pair("name", "Al B")
+        ///     .append_pair("note", "a&b=c");
+        /// assert_eq!(out, "name=Al+B&note=a%26b%3Dc");
+        /// ```
         pub fn append_pair(&mut self, name: &str, value: &str) -> &mut Self {
             // Exact when nothing needs escaping, the common case: one
             // allocation step per pair at most.
@@ -201,6 +220,15 @@ mod owned {
         }
 
         /// Appends every pair, in order.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// let tags = vec![("tag", String::from("red")), ("tag", String::from("blue"))];
+        /// let mut out = String::new();
+        /// form_net::Serializer::new(&mut out).append_pairs(tags);
+        /// assert_eq!(out, "tag=red&tag=blue");
+        /// ```
         pub fn append_pairs<I, N, V>(&mut self, pairs: I) -> &mut Self
         where
             I: IntoIterator<Item = (N, V)>,
@@ -214,6 +242,17 @@ mod owned {
         }
 
         /// Ends the serializer and returns the string.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// let mut out = String::new();
+        /// let mut s = form_net::Serializer::new(&mut out);
+        /// s.append_pair("a", "1");
+        /// let url = s.finish();
+        /// url.insert_str(0, "/path?");
+        /// assert_eq!(url, "/path?a=1");
+        /// ```
         pub fn finish(self) -> &'s mut String {
             self.out
         }

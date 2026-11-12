@@ -25,18 +25,45 @@ pub struct Secret(String);
 
 impl Secret {
     /// The secret text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::Secret;
+    ///
+    /// let password = Secret::from(String::from("hunter2"));
+    /// assert_eq!(password.expose(), "hunter2");
+    /// ```
     #[must_use]
     pub fn expose(&self) -> &str {
         &self.0
     }
 
     /// Its length in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::Secret;
+    ///
+    /// let token = Secret::from(String::from("abc123"));
+    /// assert_eq!(token.len(), 6);
+    /// ```
     #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
     /// Whether it is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::Secret;
+    ///
+    /// assert!(Secret::from(String::new()).is_empty());
+    /// assert!(!Secret::from(String::from("x")).is_empty());
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()

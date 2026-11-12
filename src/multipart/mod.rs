@@ -28,6 +28,17 @@ mod buffered {
     use crate::limits::{Limits, Policy};
 
     /// One part of a buffered multipart body. Its data borrows the body.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X--";
+    /// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// let part = &mp.parts()[0];
+    /// assert_eq!(part.name(), "title");
+    /// assert_eq!(part.text()?, "Holiday");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub struct Part<'a> {
         index: u32,
         name: Cow<'a, str>,
@@ -237,6 +248,17 @@ mod buffered {
     /// The parts of a buffered multipart body, in body order.
     ///
     /// `Debug` prints names, kinds, and lengths, never data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+    /// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// assert_eq!(mp.len(), 2);
+    /// assert_eq!(mp.field("a"), Some("1"));
+    /// assert_eq!(mp.file("f").unwrap().bytes(), b"hi");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub struct Multipart<'a> {
         parts: Vec<Part<'a>>,
@@ -530,14 +552,13 @@ mod buffered {
         let mut pos = 0usize;
         // The part being read, whether its text is readable, and whether
         // the inspector skipped it.
-        let mut current: Option<(Part<'a>, bool, bool)> = None;
+        let mut current: Option<(Part<'a>, crate::multipart::parser::TextRule, bool)> = None;
         loop {
             let rest = body.get(pos..).unwrap_or(&[]);
             // Read before `advance`: a `_charset_` part that starts in this
             // step resets the record, and the part's text is read by the
             // value declared before it, as the driver reads it (D-128, D-141).
-            let declared_ok =
-                crate::multipart::parser::declared_readable(parser.declared_charset());
+            let declared = crate::multipart::parser::declared_rule(parser.declared_charset());
             let (consumed, outcome) = parser.advance(rest, true)?;
             let base = pos;
             pos = pos.saturating_add(consumed);
@@ -565,7 +586,7 @@ mod buffered {
                         };
                         (raw, source)
                     });
-                    let charset_ok = facts.charset.readable(declared_ok);
+                    let charset_ok = facts.charset.rule(declared);
                     let part = Part {
                         index: parser.parts_seen().saturating_sub(1),
                         name,
@@ -621,15 +642,9 @@ mod buffered {
                     // (0.9: the two once differed on skipped fields).
                     if !skipped && !part.is_file() {
                         let text_at = Location::in_part(Some(part.index), part.offset);
-                        if !charset_ok {
-                            return Err(FormError::encoding(
-                                EncodingError::UnsupportedCharset,
-                                text_at,
-                            ));
-                        }
-                        if core::str::from_utf8(part.body).is_err() {
-                            return Err(FormError::encoding(EncodingError::InvalidUtf8, text_at));
-                        }
+                        charset_ok
+                            .check(part.body)
+                            .map_err(|reason| FormError::encoding(reason, text_at))?;
                     }
                     if !skipped && !part.is_file() {
                         skipped = verdict(inspector.field(part.name(), part.body), at)?;

@@ -4,15 +4,38 @@
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::error::{EncodingError, FormError, Location};
+use crate::error::{FormError, Location};
 use crate::hook::{Inspector, Sink, Verdict};
 use crate::limits::EmptyFilePolicy;
 use crate::multipart::owned_head::OwnedPartHead;
-use crate::multipart::parser::{MultipartEvent, MultipartParser, PartHead, PartKind, PartSummary};
+use crate::multipart::parser::{
+    MultipartEvent, MultipartParser, PartHead, PartKind, PartSummary, TextRule,
+};
 use crate::wipe::WipeVec;
 
 /// What completed during a [`Driver::push`]. `Debug` shows a field's name
 /// and value length, never the value.
+///
+/// # Examples
+///
+/// ```
+/// # use form_net::{Boundary, Driver, Limits, MemorySink, MultipartParser, NoInspector, Policy, Progress};
+/// # let parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+/// # let mut driver = Driver::new(parser, MemorySink::new());
+/// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+/// let (mut pos, mut seen) = (0, Vec::new());
+/// loop {
+///     let (n, progress) = driver.push(&body[pos..], true, &mut NoInspector)?;
+///     pos += n;
+///     match progress {
+///         Progress::Field { name, value } => seen.push(format!("{name}: {} bytes", value.len())),
+///         Progress::File(file) => seen.push(format!("file: {} bytes", file.len())),
+///         _ => break, // End; NeedInput would mean the body was cut short
+///     }
+/// }
+/// assert_eq!(seen, ["a: 1 bytes", "file: 2 bytes"]);
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 pub enum Progress<'d, F> {
     /// A text field ended: its name and value.
@@ -50,9 +73,9 @@ enum Part {
     Idle,
     Field {
         skip: bool,
-        /// Its charset (its own, else the `_charset_` before it) is one
-        /// form-net reads; fixed at the part's start.
-        readable: bool,
+        /// How its text is read (its own charset, else the `_charset_`
+        /// before it); fixed at the part's start.
+        rule: TextRule,
     },
     File {
         open: bool,
@@ -123,7 +146,7 @@ impl<S: Sink> State<S> {
     fn on_start<I: Inspector>(
         &mut self,
         head: &PartHead<'_>,
-        declared_ok: bool,
+        declared: TextRule,
         inspector: &mut I,
         at: Location,
     ) -> Result<Next, FormError> {
@@ -145,18 +168,12 @@ impl<S: Sink> State<S> {
             _ => {
                 crate::wipe::wipe(&mut self.text);
                 self.text.clear();
-                let readable = head.charset().readable(declared_ok);
+                let rule = head.charset().rule(declared);
                 if refused(inspector.part_start(head), at)? {
-                    self.part = Part::Field {
-                        skip: true,
-                        readable,
-                    };
+                    self.part = Part::Field { skip: true, rule };
                     return Ok(Next::SkipPart);
                 }
-                self.part = Part::Field {
-                    skip: false,
-                    readable,
-                };
+                self.part = Part::Field { skip: false, rule };
                 Ok(Next::Continue)
             }
         }
@@ -239,15 +256,9 @@ impl<S: Sink> State<S> {
     ) -> Result<Next, FormError> {
         let index = self.head.view().index();
         match self.part {
-            Part::Field {
-                skip: false,
-                readable,
-            } => {
+            Part::Field { skip: false, rule } => {
                 if refused(inspector.data(index, bytes), at)? {
-                    self.part = Part::Field {
-                        skip: true,
-                        readable,
-                    };
+                    self.part = Part::Field { skip: true, rule };
                     return Ok(Next::SkipPart);
                 }
                 crate::wipe::append_wiping(&mut self.text, bytes, 256, self.value_cap);
@@ -329,6 +340,17 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> fmt::Debug for Driver<B, S> {
 
 impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
     /// A driver over `parser` writing files to `sink`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Boundary, DiscardSink, Driver, Limits, MultipartParser, Policy};
+    ///
+    /// let parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// let driver = Driver::new(parser, DiscardSink::default());
+    /// assert_eq!(driver.parser().bytes_seen(), 0);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn new(parser: MultipartParser<B>, sink: S) -> Self {
         let limits = *parser.limits();
@@ -352,12 +374,37 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
     }
 
     /// The parser.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Boundary, Driver, Limits, MemorySink, MultipartParser, NoInspector, Policy};
+    ///
+    /// let parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// let mut driver = Driver::new(parser, MemorySink::new());
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+    /// driver.push(body, true, &mut NoInspector)?;
+    /// assert_eq!(driver.parser().parts_seen(), 1);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn parser(&self) -> &MultipartParser<B> {
         &self.parser
     }
 
     /// The parser and the sink.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Boundary, DiscardSink, Driver, Limits, MultipartParser, Policy};
+    ///
+    /// let parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// let driver = Driver::new(parser, DiscardSink::default());
+    /// let (parser, _sink) = driver.into_parts();
+    /// assert!(!parser.is_done());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn into_parts(self) -> (MultipartParser<B>, S) {
         (self.parser, self.state.sink)
     }
@@ -371,6 +418,22 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
     /// Every multipart error, `Refused`, and the sink's errors. On error the
     /// sink has already been aborted and `inspector.failed` called; later
     /// calls return `Poisoned`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Boundary, Driver, Limits, MemorySink, MultipartParser, NoInspector, Policy, Progress};
+    ///
+    /// let parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// let mut driver = Driver::new(parser, MemorySink::new());
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+    /// // The body arrives in two pieces; the first is not the end of it.
+    /// let (n, progress) = driver.push(&body[..20], false, &mut NoInspector)?;
+    /// assert_eq!((n, matches!(progress, Progress::NeedInput)), (20, true));
+    /// let (_, progress) = driver.push(&body[20..], true, &mut NoInspector)?;
+    /// assert!(matches!(progress, Progress::File(f) if f.bytes() == b"hi"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn push<'d, I: Inspector>(
         &'d mut self,
         input: &[u8],
@@ -422,8 +485,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
             let parts = self.parser.parts_seen();
             // The `_charset_` declared before the event (a part start comes
             // in a call of its own, after the part before it ended).
-            let declared_ok =
-                crate::multipart::parser::declared_readable(self.parser.declared_charset());
+            let declared = crate::multipart::parser::declared_rule(self.parser.declared_charset());
             let step = self.parser.parse(rest, eof)?;
             pos = pos.saturating_add(step.consumed);
             let index = match &step.event {
@@ -433,7 +495,7 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
             let at = Location::in_part(index, seen.saturating_add(step.consumed as u64));
             let next = match step.event {
                 MultipartEvent::PartStart(head) => {
-                    self.state.on_start(&head, declared_ok, inspector, at)?
+                    self.state.on_start(&head, declared, inspector, at)?
                 }
                 MultipartEvent::Data(bytes) => self.state.on_data(bytes, inspector, at)?,
                 MultipartEvent::PartEnd(summary) => {
@@ -508,23 +570,13 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>, S: Sink> Driver<B, S> {
                 let output = self.state.sink.close()?;
                 Ok(Some(Done::File(output)))
             }
-            Part::Field {
-                skip: false,
-                readable,
-            } => {
+            Part::Field { skip: false, rule } => {
                 // Checked as text before the inspector sees it as a field,
-                // as the buffered parser checks it: the charset fixed at the
+                // as the buffered parser checks it: the rule fixed at the
                 // part's start, then the bytes as UTF-8.
                 let text_at = Location::in_part(Some(summary.index), at.offset);
-                if !readable {
-                    return Err(FormError::encoding(
-                        EncodingError::UnsupportedCharset,
-                        text_at,
-                    ));
-                }
-                if core::str::from_utf8(&self.state.text).is_err() {
-                    return Err(FormError::encoding(EncodingError::InvalidUtf8, text_at));
-                }
+                rule.check(&self.state.text)
+                    .map_err(|reason| FormError::encoding(reason, text_at))?;
                 let name = self.state.head.view().name();
                 // The name is copied out of the head: the inspector borrows
                 // the text buffer.

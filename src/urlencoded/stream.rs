@@ -69,6 +69,19 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> fmt::Debug for UrlencodedParser<B> {
 
 /// One step of [`UrlencodedParser::parse`]: how much input was consumed and
 /// what it completed.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Limits, UrlencodedEvent, UrlencodedParser};
+///
+/// let mut scratch = vec![0u8; Limits::DEFAULT.urlencoded_buffer_len()];
+/// let mut parser = UrlencodedParser::with_buffer(&Limits::DEFAULT, &mut scratch[..])?;
+/// let step = parser.parse(b"a=1&b=2", true)?;
+/// assert_eq!(step.consumed, 4);
+/// assert!(matches!(step.event, UrlencodedEvent::Pair(p) if p.value_raw() == b"1"));
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct UrlencodedStep<'p> {
@@ -79,6 +92,20 @@ pub struct UrlencodedStep<'p> {
 }
 
 /// What a step of the streaming parser completed.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Limits, UrlencodedEvent, UrlencodedParser};
+///
+/// # let mut parser = UrlencodedParser::with_buffer(&Limits::DEFAULT, vec![0u8; Limits::DEFAULT.urlencoded_buffer_len()])?;
+/// // The pair may go on in the next chunk, so it is held.
+/// assert!(matches!(parser.parse(b"a=1", false)?.event, UrlencodedEvent::NeedInput));
+/// let step = parser.parse(b"", true)?;
+/// assert!(matches!(step.event, UrlencodedEvent::Pair(p) if p.name_raw() == b"a"));
+/// assert!(matches!(parser.parse(b"", true)?.event, UrlencodedEvent::End));
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug)]
 pub enum UrlencodedEvent<'p> {
@@ -105,6 +132,20 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
     /// # Errors
     ///
     /// `InvalidLimits`; `BufferTooSmall { needed }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormError, Limits, UrlencodedParser};
+    ///
+    /// let needed = Limits::DEFAULT.urlencoded_buffer_len();
+    /// let mut small = [0u8; 16];
+    /// let err = UrlencodedParser::with_buffer(&Limits::DEFAULT, &mut small[..]).unwrap_err();
+    /// assert_eq!(err, FormError::BufferTooSmall { needed });
+    /// let parser = UrlencodedParser::with_buffer(&Limits::DEFAULT, vec![0u8; needed])?;
+    /// assert_eq!(parser.bytes_seen(), 0);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn with_buffer(limits: &Limits, scratch: B) -> Result<Self, FormError> {
         limits.validate()?;
         let needed = limits.urlencoded_buffer_len();
@@ -131,6 +172,26 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
     ///
     /// The errors of [`raw_pairs`](crate::raw_pairs); `Poisoned` after an
     /// error until [`reset`](Self::reset).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, UrlencodedEvent, UrlencodedParser};
+    ///
+    /// # let mut parser = UrlencodedParser::with_buffer(&Limits::DEFAULT, vec![0u8; Limits::DEFAULT.urlencoded_buffer_len()])?;
+    /// let mut body = &b"q=rust&page=2"[..];
+    /// let mut names = Vec::new();
+    /// loop {
+    ///     let step = parser.parse(body, true)?;
+    ///     body = &body[step.consumed..];
+    ///     match step.event {
+    ///         UrlencodedEvent::Pair(p) => names.push(p.name_raw().to_vec()),
+    ///         _ => break,
+    ///     }
+    /// }
+    /// assert_eq!(names, [b"q".to_vec(), b"page".to_vec()]);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn parse<'p>(
         &'p mut self,
         input: &'p [u8],
@@ -168,6 +229,20 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
 
     /// Clears the counters and the poisoned state and wipes the scratch, for
     /// the next body.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormError, Limits, UrlencodedEvent, UrlencodedParser};
+    ///
+    /// let limits = Limits::DEFAULT.with_max_name_bytes(4);
+    /// let mut parser = UrlencodedParser::with_buffer(&limits, vec![0u8; limits.urlencoded_buffer_len()])?;
+    /// assert!(parser.parse(b"too_long=1", true).is_err());
+    /// assert_eq!(parser.parse(b"a=1", true).unwrap_err(), FormError::Poisoned);
+    /// parser.reset();
+    /// assert!(matches!(parser.parse(b"a=1", true)?.event, UrlencodedEvent::Pair(_)));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn reset(&mut self) {
         self.wipe_used();
         self.held = 0;
@@ -180,6 +255,17 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> UrlencodedParser<B> {
     }
 
     /// Body bytes consumed so far.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, UrlencodedParser};
+    ///
+    /// # let mut parser = UrlencodedParser::with_buffer(&Limits::DEFAULT, vec![0u8; Limits::DEFAULT.urlencoded_buffer_len()])?;
+    /// let consumed = parser.parse(b"a=1&b=2", false)?.consumed;
+    /// assert_eq!((consumed, parser.bytes_seen()), (4, 4));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn bytes_seen(&self) -> u64 {
         self.seen

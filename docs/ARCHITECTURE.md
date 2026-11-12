@@ -86,16 +86,16 @@ PartStart ─▶ Inspector::part_start
 first sniff_bytes of a file ─▶ Inspector::sniff
 Data ─▶ Inspector::data ─▶ (file) Sink::open on the first accepted byte, then Sink::write
                          └▶ (text) buffered for Inspector::field
-PartEnd ─▶ Inspector::field (text) ─▶ Sink::close (file) ─▶ Inspector::part_end
+PartEnd ─▶ Inspector::field (text) ─▶ Inspector::part_end ─▶ Sink::close (file)
 End ─▶ Inspector::end
 any error or Refuse ─▶ Sink::abort ─▶ Inspector::failed (once)
 ```
 
-The sink is opened lazily (D-089): a part refused or skipped by the inspector makes no sink call at all. `UploadSession`, `read_multipart_inspected`, `parse_multipart_inspected`, and `FromForm::from_body_inspected` all run this one driver, or follow the same order over a buffered body. Inspectors chain as pairs: `(customs, (sentinel, app))`, the first refusal winning.
+The sink is opened lazily (D-089): a part refused or skipped by the inspector makes no sink call at all. `part_end` comes before `close`, so a refusal there aborts the sink and a sink that commits in `close` never keeps a refused file (D-139). `UploadSession`, `read_multipart_inspected`, `parse_multipart_inspected`, and `FromForm::from_body_inspected` all run this one driver, or follow the same order over a buffered body. Inspectors chain as pairs: `(customs, (sentinel, app))`, the first refusal winning.
 
 ## Storage
 
-`Store` is shared state behind an `Arc`: the private directory (created once, or lazily for one-shot parses), counters, and an optional `SpillBudget`. Each request gets a `StoreSink`. A file stays in memory up to the threshold, in a buffer capped at the most it can hold; past it the file spills to `upload-<32 hex>.part`, opened with `create_new`, owner-only on Unix, and in the default anonymous mode unlinked (Unix) or opened delete-on-close with no sharing (Windows). Before every disk write the sink checks the request's `max_disk_bytes` and reserves from the shared budget; every reserved byte is released once, when its file is deleted or persisted. `StoredFile` reads with positional reads, so readers do not share a cursor. `persist` never overwrites and removes a partial copy on failure. `sweep` removes named-mode leftovers at startup. Platform details are in [`PLATFORM-NOTES.md`](./PLATFORM-NOTES.md).
+`Store` is shared state behind an `Arc`: the private directory (created once, or lazily for one-shot parses), counters, and an optional `SpillBudget`. Each request gets a `StoreSink`. A file stays in memory up to the threshold, in a buffer capped at the most it can hold; past it the file spills to `upload-<32 hex>.part`, opened with `create_new`, owner-only on Unix, and in the default anonymous mode unlinked (Unix) or opened delete-on-close with no sharing (Windows). Before every disk write the sink checks the request's `max_disk_bytes` and reserves from the shared budget; every reserved byte is released once, when its file is deleted or persisted. `StoredFile` reads with positional reads, so readers do not share a cursor. `persist` never overwrites, removes a partial copy on failure, gives the upload back when it fails, and makes owner-only files on Unix. `sweep` removes named-mode leftovers at startup, including those in a crashed process's private directory under the temporary directory. Platform details are in [`PLATFORM-NOTES.md`](./PLATFORM-NOTES.md).
 
 ## Typed extraction
 

@@ -5,6 +5,18 @@ use core::fmt;
 use crate::error::{EncodingError, FormError, Location};
 
 /// Where a file name came from.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::FileNameSource;
+///
+/// # let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+/// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+/// let name = mp.file("f").unwrap().filename().unwrap();
+/// assert_eq!(name.source(), FileNameSource::Plain);
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileNameSource {
@@ -127,8 +139,10 @@ impl<'a> FileName<'a> {
     }
 
     /// The text after the last `.` of the base name, when it is 1 to 16
-    /// ASCII letters or digits. A hint that proves nothing about the
+    /// ASCII letters or digits and the dot is not the name's first byte
+    /// (`.htaccess` has none; D-157). A hint that proves nothing about the
     /// content: only the bytes tell what a file is.
+    /// `FileName::sanitized` (feature `fs`) always keeps this extension.
     ///
     /// # Examples
     ///
@@ -142,6 +156,9 @@ impl<'a> FileName<'a> {
     pub fn extension(&self) -> Option<&'a str> {
         let base = self.basename();
         let dot = base.iter().rposition(|&b| b == b'.')?;
+        if dot == 0 {
+            return None;
+        }
         let ext = base.get(dot.wrapping_add(1)..)?;
         if ext.is_empty() || ext.len() > 16 || !ext.iter().all(u8::is_ascii_alphanumeric) {
             return None;
@@ -335,7 +352,10 @@ mod tests {
 
     #[test]
     fn test_extension_cases() {
-        assert_eq!(name(b".bashrc").extension(), Some("bashrc"));
+        // A dot file has no extension (D-157).
+        assert_eq!(name(b".bashrc").extension(), None);
+        assert_eq!(name(b"dir/.bashrc").extension(), None);
+        assert_eq!(name(b".user.ini").extension(), Some("ini"));
         assert_eq!(name(b"a.").extension(), None);
         assert_eq!(name(b"a.tar.gz").extension(), Some("gz"));
         assert_eq!(name("a.\u{c4}\u{d6}".as_bytes()).extension(), None);

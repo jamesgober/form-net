@@ -50,6 +50,16 @@ pub struct RefusalDigest<const N: usize = 0> {
 impl RefusalDigest<0> {
     /// A digest of form-net's own codes; every inspector refusal counts as
     /// [`unnamed`](Self::unnamed).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::RefusalDigest;
+    ///
+    /// let digest = RefusalDigest::new();
+    /// digest.record(&form_net::parse_urlencoded(b"a=%").unwrap_err());
+    /// assert_eq!(digest.count("encoding.invalid_percent"), 1);
+    /// ```
     #[must_use]
     pub const fn new() -> RefusalDigest<0> {
         RefusalDigest::with_codes([])
@@ -65,6 +75,17 @@ impl Default for RefusalDigest<0> {
 impl<const N: usize> RefusalDigest<N> {
     /// A digest that also counts these inspector codes one by one (the codes
     /// the route's inspectors can return, such as customs-sec's).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormError, Location, Refusal, RefusalDigest};
+    ///
+    /// let digest = RefusalDigest::with_codes(["customs.too_many"]);
+    /// digest.record(&FormError::Refused { refusal: Refusal::new(400, "customs.too_many"), at: Location::NONE });
+    /// assert_eq!(digest.count("customs.too_many"), 1);
+    /// assert_eq!(digest.unnamed(), 0);
+    /// ```
     #[must_use]
     pub const fn with_codes(codes: [&'static str; N]) -> RefusalDigest<N> {
         RefusalDigest {
@@ -79,6 +100,16 @@ impl<const N: usize> RefusalDigest<N> {
     ///
     /// Cost: one match and one relaxed atomic add for form-net's codes; an
     /// inspector refusal compares its code with the named codes first.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let digest = form_net::RefusalDigest::new();
+    /// if let Err(e) = form_net::parse_urlencoded(b"a=%zz") {
+    ///     digest.record(&e);
+    /// }
+    /// assert_eq!(digest.total(), 1);
+    /// ```
     #[inline]
     pub fn record(&self, error: &FormError) {
         let counter = match error.slot() {
@@ -99,6 +130,15 @@ impl<const N: usize> RefusalDigest<N> {
     /// How many times `code` was recorded (form-net's codes and the named
     /// inspector codes; a code named twice, or named and also form-net's,
     /// sums its counters).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let digest = form_net::RefusalDigest::new();
+    /// digest.record(&form_net::parse_urlencoded(b"a=%").unwrap_err());
+    /// assert_eq!(digest.count("encoding.invalid_percent"), 1);
+    /// assert_eq!(digest.count("limit.body"), 0);
+    /// ```
     #[must_use]
     pub fn count(&self, code: &str) -> u64 {
         self.iter_all()
@@ -107,12 +147,33 @@ impl<const N: usize> RefusalDigest<N> {
     }
 
     /// How many inspector refusals had a code that was not named.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormError, Location, Refusal, RefusalDigest};
+    ///
+    /// let digest = RefusalDigest::new();
+    /// digest.record(&FormError::Refused { refusal: Refusal::new(403, "app.blocked"), at: Location::NONE });
+    /// assert_eq!(digest.unnamed(), 1);
+    /// ```
     #[must_use]
     pub fn unnamed(&self) -> u64 {
         load(&self.unnamed)
     }
 
     /// Everything recorded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormError, Location, Refusal, RefusalDigest};
+    ///
+    /// let digest = RefusalDigest::new();
+    /// digest.record(&form_net::parse_urlencoded(b"a=%").unwrap_err());
+    /// digest.record(&FormError::Refused { refusal: Refusal::new(403, "app.blocked"), at: Location::NONE });
+    /// assert_eq!(digest.total(), 2);
+    /// ```
     #[must_use]
     pub fn total(&self) -> u64 {
         self.iter_all()
@@ -121,6 +182,15 @@ impl<const N: usize> RefusalDigest<N> {
 
     /// Every code with a count above zero, form-net's first in a fixed
     /// order, then the named codes; [`unnamed`](Self::unnamed) is apart.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let digest = form_net::RefusalDigest::new();
+    /// digest.record(&form_net::parse_urlencoded(b"a=%").unwrap_err());
+    /// let counts: Vec<_> = digest.iter().collect();
+    /// assert_eq!(counts, [("encoding.invalid_percent", 1)]);
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = (&'static str, u64)> + '_ {
         self.iter_all().filter(|(_, n)| *n > 0)
     }

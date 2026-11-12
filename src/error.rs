@@ -83,11 +83,19 @@ pub enum FormError {
         /// The length it must have.
         needed: usize,
     },
-    /// The reader, the writer, or the file system failed.
+    /// The writer or the file system failed: a fault on this side.
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     Io {
         /// The kind of failure; never a path or an OS message.
+        kind: std::io::ErrorKind,
+    },
+    /// Reading the request body failed: the client disconnected or the
+    /// connection broke. A 400, not a server fault (D-159).
+    #[cfg(feature = "std")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+    BodyRead {
+        /// The kind of failure; never an OS message.
         kind: std::io::ErrorKind,
     },
     /// The operating system's random source failed.
@@ -194,6 +202,8 @@ impl FormError {
             Self::InvalidLimits { .. } | Self::BufferTooSmall { .. } | Self::Poisoned => 500,
             #[cfg(feature = "std")]
             Self::Io { .. } | Self::Random => 500,
+            #[cfg(feature = "std")]
+            Self::BodyRead { .. } => 400,
             #[cfg(feature = "fs")]
             Self::Store { reason } => match reason {
                 crate::store::StoreError::QuotaExceeded => 503,
@@ -231,6 +241,8 @@ impl FormError {
             #[cfg(feature = "std")]
             Self::Io { .. } => "io",
             #[cfg(feature = "std")]
+            Self::BodyRead { .. } => "body_read",
+            #[cfg(feature = "std")]
             Self::Random => "random",
             #[cfg(feature = "fs")]
             Self::Store { reason } => reason.code(),
@@ -259,6 +271,8 @@ impl FormError {
             #[cfg(feature = "std")]
             Self::Random => 59,
             Self::Poisoned => 60,
+            #[cfg(feature = "std")]
+            Self::BodyRead { .. } => 61,
             Self::Refused { .. } => return None,
         };
         Some(slot)
@@ -316,6 +330,8 @@ impl fmt::Display for FormError {
             ),
             #[cfg(feature = "std")]
             Self::Io { kind } => write!(f, "I/O failure: {kind}"),
+            #[cfg(feature = "std")]
+            Self::BodyRead { kind } => write!(f, "reading the request body failed: {kind}"),
             #[cfg(feature = "std")]
             Self::Random => f.write_str(
                 "the operating system's random source failed; no predictable fallback is used",
@@ -382,6 +398,17 @@ impl fmt::Display for Location {
 }
 
 /// Which budget of [`Limits`](crate::Limits) was exceeded.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{FormError, Limit, Limits, Policy};
+///
+/// let limits = Limits::DEFAULT.with_max_fields(2);
+/// let err = form_net::parse_urlencoded_with(b"a=1&b=2&c=3", &limits, &Policy::DEFAULT).unwrap_err();
+/// assert!(matches!(err, FormError::Limit { limit: Limit::Fields, .. }));
+/// assert_eq!((err.status_hint(), err.code()), (413, "limit.fields"));
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Limit {
@@ -527,6 +554,16 @@ impl Limit {
 }
 
 /// What part of the grammar the input broke.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{FormError, SyntaxError};
+///
+/// let err = form_net::parse_multipart(b"multipart/form-data", b"").unwrap_err();
+/// assert!(matches!(err, FormError::Syntax { reason: SyntaxError::MissingBoundary, .. }));
+/// assert_eq!(err.code(), "syntax.missing_boundary");
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyntaxError {
@@ -658,6 +695,17 @@ impl SyntaxError {
 }
 
 /// Bytes that do not decode.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{EncodingError, FormError};
+///
+/// let err = form_net::parse_urlencoded(b"a=%zz").unwrap_err();
+/// assert!(matches!(err, FormError::Encoding { reason: EncodingError::InvalidPercent, .. }));
+/// let err = form_net::parse_urlencoded(b"a=\xff").unwrap_err();
+/// assert_eq!(err.code(), "encoding.invalid_utf8");
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncodingError {
@@ -702,6 +750,18 @@ impl EncodingError {
 }
 
 /// Well-formed input that a [`Policy`](crate::Policy) refuses.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{FormError, PolicyRefusal};
+///
+/// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\
+///              Content-Transfer-Encoding: base64\r\n\r\nMQ==\r\n--X--";
+/// let err = form_net::parse_multipart(b"multipart/form-data; boundary=X", body).unwrap_err();
+/// assert!(matches!(err, FormError::Policy { reason: PolicyRefusal::TransferEncoding, .. }));
+/// assert_eq!(err.code(), "policy.transfer_encoding");
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolicyRefusal {
@@ -764,6 +824,18 @@ impl PolicyRefusal {
 }
 
 /// Why typed extraction failed.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{ExtractError, FormError};
+///
+/// let form = form_net::parse_urlencoded(b"role=user&role=admin")?;
+/// let err = form.field_one("role").unwrap_err();
+/// assert!(matches!(err, FormError::Extract { reason: ExtractError::Duplicate, .. }));
+/// assert_eq!((err.status_hint(), err.code()), (422, "extract.duplicate"));
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtractError {
@@ -814,7 +886,7 @@ impl ExtractError {
 
 /// How many codes form-net itself returns, in every feature mode.
 #[cfg(target_has_atomic = "32")]
-pub(crate) const SLOTS: usize = 61;
+pub(crate) const SLOTS: usize = 62;
 
 /// Every code form-net itself returns, at its [`FormError::slot`].
 #[cfg(target_has_atomic = "32")]
@@ -880,6 +952,7 @@ pub(crate) const SLOT_CODES: [&str; SLOTS] = [
     "io",
     "random",
     "poisoned",
+    "body_read",
 ];
 
 #[cfg(test)]
@@ -987,6 +1060,10 @@ pub(crate) mod tests {
         #[cfg(feature = "std")]
         all.push(FormError::Random);
         all.push(FormError::Poisoned);
+        #[cfg(feature = "std")]
+        all.push(FormError::BodyRead {
+            kind: std::io::ErrorKind::UnexpectedEof,
+        });
         all
     }
 
@@ -1015,7 +1092,7 @@ pub(crate) mod tests {
             ]);
         }
         if !cfg!(feature = "std") {
-            expected.extend(["io", "random"]);
+            expected.extend(["io", "random", "body_read"]);
         }
         assert_eq!(unused, expected);
         for (i, a) in SLOT_CODES.iter().enumerate() {
