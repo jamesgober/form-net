@@ -479,6 +479,18 @@ impl Policy {
     };
 
     /// Sets `percent`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, PercentPolicy, Policy};
+    ///
+    /// let lenient = Policy::DEFAULT.with_percent(PercentPolicy::Literal);
+    /// let form = form_net::parse_urlencoded_with(b"rate=100%", &Limits::DEFAULT, &lenient)?;
+    /// assert_eq!(form.field("rate"), Some("100%"));
+    /// assert!(form_net::parse_urlencoded(b"rate=100%").is_err());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn with_percent(mut self, policy: PercentPolicy) -> Self {
         self.percent = policy;
@@ -486,6 +498,21 @@ impl Policy {
     }
 
     /// Sets `extended_filename`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # const CT: &[u8] = b"multipart/form-data; boundary=X";
+    /// use form_net::{ExtendedFilenamePolicy, Limits, Policy};
+    ///
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename*=UTF-8''a.txt\r\n\r\nhi\r\n--X--";
+    /// let accept = Policy::DEFAULT.with_extended_filename(ExtendedFilenamePolicy::AcceptAlone);
+    /// let form = form_net::parse_multipart_with(CT, body, &Limits::DEFAULT, &accept)?;
+    /// assert!(form.file("f").is_some());
+    /// let err = form_net::parse_multipart(CT, body).unwrap_err();
+    /// assert_eq!(err.code(), "policy.extended_filename");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn with_extended_filename(mut self, policy: ExtendedFilenamePolicy) -> Self {
         self.extended_filename = policy;
@@ -493,6 +520,20 @@ impl Policy {
     }
 
     /// Sets `unknown_headers`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # const CT: &[u8] = b"multipart/form-data; boundary=X";
+    /// use form_net::{HeaderPolicy, Limits, Policy};
+    ///
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nX-Note: hi\r\n\r\n1\r\n--X--";
+    /// assert_eq!(form_net::parse_multipart(CT, body)?.field("a"), Some("1"));
+    /// let strict = Policy::DEFAULT.with_unknown_headers(HeaderPolicy::Refuse);
+    /// let err = form_net::parse_multipart_with(CT, body, &Limits::DEFAULT, &strict).unwrap_err();
+    /// assert_eq!(err.code(), "policy.unknown_header");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn with_unknown_headers(mut self, policy: HeaderPolicy) -> Self {
         self.unknown_headers = policy;
@@ -500,6 +541,20 @@ impl Policy {
     }
 
     /// Sets `empty_files`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # const CT: &[u8] = b"multipart/form-data; boundary=X";
+    /// use form_net::{EmptyFilePolicy, Limits, Policy};
+    ///
+    /// // A file input the user left empty.
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=\"\"\r\n\r\n\r\n--X--";
+    /// assert_eq!(form_net::parse_multipart(CT, body)?.len(), 1);
+    /// let skip = Policy::DEFAULT.with_empty_files(EmptyFilePolicy::Skip);
+    /// assert_eq!(form_net::parse_multipart_with(CT, body, &Limits::DEFAULT, &skip)?.len(), 0);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn with_empty_files(mut self, policy: EmptyFilePolicy) -> Self {
         self.empty_files = policy;
@@ -507,6 +562,21 @@ impl Policy {
     }
 
     /// Sets the token field to capture.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # const CT: &[u8] = b"multipart/form-data; boundary=X";
+    /// use form_net::{Limits, Policy, TokenField};
+    ///
+    /// let guarded = Policy::DEFAULT.with_token_field(TokenField::new("csrf"));
+    /// // A file part before the token: refused.
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n\
+    ///              --X\r\nContent-Disposition: form-data; name=csrf\r\n\r\nt0k\r\n--X--";
+    /// let err = form_net::parse_multipart_with(CT, body, &Limits::DEFAULT, &guarded).unwrap_err();
+    /// assert_eq!(err.code(), "policy.token_field_late");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn with_token_field(mut self, field: TokenField) -> Self {
         self.token_field = Some(field);
@@ -622,6 +692,16 @@ pub struct TokenField {
 
 impl TokenField {
     /// A token field named `name` that must come before the first file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{TokenField, TokenPlacement};
+    ///
+    /// const TOKEN: TokenField = TokenField::new("csrf_token");
+    /// assert_eq!(TOKEN.name(), "csrf_token");
+    /// assert_eq!(TOKEN.placement(), TokenPlacement::BeforeFirstFile);
+    /// ```
     #[must_use]
     pub const fn new(name: &'static str) -> TokenField {
         TokenField {
@@ -631,6 +711,20 @@ impl TokenField {
     }
 
     /// The same field, allowed anywhere in the body.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # const CT: &[u8] = b"multipart/form-data; boundary=X";
+    /// use form_net::{Limits, Policy, TokenField};
+    ///
+    /// let relaxed = Policy::DEFAULT.with_token_field(TokenField::new("csrf").anywhere());
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n\
+    ///              --X\r\nContent-Disposition: form-data; name=csrf\r\n\r\nt0k\r\n--X--";
+    /// let form = form_net::parse_multipart_with(CT, body, &Limits::DEFAULT, &relaxed)?;
+    /// assert_eq!(form.field("csrf"), Some("t0k"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn anywhere(self) -> TokenField {
         TokenField {
@@ -640,12 +734,28 @@ impl TokenField {
     }
 
     /// The field name, matched byte for byte.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let field = form_net::TokenField::new("csrf").anywhere();
+    /// assert_eq!(field.name(), "csrf");
+    /// ```
     #[must_use]
     pub const fn name(&self) -> &'static str {
         self.name
     }
 
     /// Where the field must be.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{TokenField, TokenPlacement};
+    ///
+    /// assert_eq!(TokenField::new("t").placement(), TokenPlacement::BeforeFirstFile);
+    /// assert_eq!(TokenField::new("t").anywhere().placement(), TokenPlacement::Anywhere);
+    /// ```
     #[must_use]
     pub const fn placement(&self) -> TokenPlacement {
         self.placement
@@ -653,6 +763,15 @@ impl TokenField {
 }
 
 /// Where the token field must be.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Policy, TokenField, TokenPlacement};
+///
+/// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf").anywhere());
+/// assert_eq!(policy.token_field.map(|t| t.placement()), Some(TokenPlacement::Anywhere));
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenPlacement {

@@ -58,24 +58,55 @@ pub enum Charset {
     Other,
 }
 
-/// Whether a declared `_charset_` value lets text be read: none, `utf-8`,
-/// or `us-ascii`.
+/// How a text value is read, from its charset label.
 #[cfg(feature = "alloc")]
-pub(crate) fn declared_readable(declared: Option<&[u8]>) -> bool {
-    declared.is_none_or(|label| {
-        label.eq_ignore_ascii_case(b"utf-8") || label.eq_ignore_ascii_case(b"us-ascii")
-    })
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextRule {
+    /// UTF-8 (no label, or `utf-8`).
+    Utf8,
+    /// `us-ascii`: every byte below 0x80. WHATWG readers decode the label as
+    /// windows-1252, so a higher byte would read differently there (D-150).
+    Ascii,
+    /// Any other label.
+    Refuse,
+}
+
+#[cfg(feature = "alloc")]
+impl TextRule {
+    /// Checks `bytes` against the rule, then as UTF-8.
+    pub(crate) fn check(self, bytes: &[u8]) -> Result<(), EncodingError> {
+        match self {
+            TextRule::Refuse => Err(EncodingError::UnsupportedCharset),
+            TextRule::Ascii if !bytes.is_ascii() => Err(EncodingError::UnsupportedCharset),
+            _ if core::str::from_utf8(bytes).is_err() => Err(EncodingError::InvalidUtf8),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The rule a declared `_charset_` value sets for the text after it.
+#[cfg(feature = "alloc")]
+pub(crate) fn declared_rule(declared: Option<&[u8]>) -> TextRule {
+    match declared {
+        None => TextRule::Utf8,
+        Some(label) => match Charset::from_label(label) {
+            Charset::Utf8 => TextRule::Utf8,
+            Charset::Ascii => TextRule::Ascii,
+            _ => TextRule::Refuse,
+        },
+    }
 }
 
 impl Charset {
-    /// Whether a text part with this charset can be read: its own label,
-    /// else the `_charset_` declared before it (`declared_ok`), else UTF-8.
+    /// How a text part with this charset is read: by its own label, else by
+    /// the `_charset_` declared before it, else as UTF-8.
     #[cfg(feature = "alloc")]
-    pub(crate) const fn readable(self, declared_ok: bool) -> bool {
+    pub(crate) const fn rule(self, declared: TextRule) -> TextRule {
         match self {
-            Charset::Utf8 | Charset::Ascii => true,
-            Charset::Other => false,
-            Charset::Unspecified => declared_ok,
+            Charset::Utf8 => TextRule::Utf8,
+            Charset::Ascii => TextRule::Ascii,
+            Charset::Other => TextRule::Refuse,
+            Charset::Unspecified => declared,
         }
     }
 
@@ -92,6 +123,19 @@ impl Charset {
 
 /// One step of the parser: how many input bytes it consumed, and what
 /// happened.
+///
+/// # Examples
+///
+/// ```
+/// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+/// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+/// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+/// let step = parser.parse(body, true)?;
+/// assert!(matches!(step.event, MultipartEvent::PartStart(_)));
+/// // The rest of the body goes to the next call.
+/// assert!(step.consumed > 0 && step.consumed < body.len());
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct MultipartStep<'p> {
@@ -109,6 +153,28 @@ pub struct MultipartStep<'p> {
 /// part comes `End`. `NeedInput` can appear anywhere between.
 ///
 /// `Debug` prints the length of `Data`, never the bytes.
+///
+/// # Examples
+///
+/// ```
+/// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+/// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+/// let mut rest = &b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n12\r\n--X--"[..];
+/// let mut seen = String::new();
+/// loop {
+///     let step = parser.parse(rest, true)?;
+///     rest = &rest[step.consumed..];
+///     match step.event {
+///         MultipartEvent::PartStart(head) => seen.push_str(head.name()),
+///         MultipartEvent::Data(bytes) => seen.push_str(&format!(" {}", bytes.len())),
+///         MultipartEvent::PartEnd(_) => seen.push_str(" end"),
+///         MultipartEvent::End | MultipartEvent::NeedInput => break,
+///         _ => {}
+///     }
+/// }
+/// assert_eq!(seen, "a 2 end");
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 pub enum MultipartEvent<'p> {
     /// A part's headers were read and checked.
@@ -136,6 +202,24 @@ impl fmt::Debug for MultipartEvent<'_> {
 }
 
 /// What one part was.
+///
+/// # Examples
+///
+/// ```
+/// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+/// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+/// let mut rest = &b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\nhello\r\n--X--"[..];
+/// let summary = loop {
+///     let step = parser.parse(rest, true)?;
+///     rest = &rest[step.consumed..];
+///     if let MultipartEvent::PartEnd(summary) = step.event {
+///         break summary;
+///     }
+/// };
+/// assert_eq!((summary.index, summary.bytes, summary.skipped), (0, 5, false));
+/// assert_eq!(summary.kind, PartKind::Field);
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PartSummary {
@@ -152,6 +236,19 @@ pub struct PartSummary {
 /// The validated header block of one part, borrowed.
 ///
 /// A head is only produced after every header budget and rule passed.
+///
+/// # Examples
+///
+/// ```
+/// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+/// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+/// let body = b"--X\r\nContent-Disposition: form-data; name=doc; filename=a.pdf\r\nContent-Type: application/pdf\r\n\r\n%PDF\r\n--X--";
+/// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+/// assert_eq!(head.name(), "doc");
+/// assert!(head.is_file());
+/// assert!(head.content_type().unwrap().is("application", "pdf"));
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[derive(Clone, Copy)]
 pub struct PartHead<'p> {
     index: u32,
@@ -208,6 +305,17 @@ impl<'p> PartHead<'p> {
     }
 
     /// The part index, from 0, in body order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// assert_eq!(head.index(), 0);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn index(&self) -> u32 {
         self.index
@@ -215,54 +323,156 @@ impl<'p> PartHead<'p> {
 
     /// The field name, with `%0A`, `%0D`, `%22` decoded to LF, CR, `"` (no
     /// other escape is decoded). Always valid UTF-8 and never empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=\"a%22b\"\r\n\r\n1\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// assert_eq!(head.name(), "a\"b");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn name(&self) -> &'p str {
         self.name
     }
 
     /// The field name as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=\"a%22b\"\r\n\r\n1\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// assert_eq!(head.name_raw(), b"a%22b");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn name_raw(&self) -> &'p [u8] {
         self.name_raw
     }
 
     /// Field or file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// assert_eq!(head.kind(), PartKind::File);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn kind(&self) -> PartKind {
         self.kind
     }
 
     /// Whether this is a file part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// assert!(!head.is_file());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn is_file(&self) -> bool {
         matches!(self.kind, PartKind::File)
     }
 
     /// The client's file name, for file parts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// assert_eq!(head.filename().unwrap().raw(), b"a.txt");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn filename(&self) -> Option<FileName<'p>> {
         self.filename
     }
 
     /// The declared `Content-Type`: a hint, never trusted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain\r\n\r\n1\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// assert!(head.content_type().unwrap().is("text", "plain"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn content_type(&self) -> Option<ContentType<'p>> {
         self.content_type.and_then(ContentType::parse)
     }
 
     /// The part's own `charset` parameter (`Unspecified` when absent).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain; charset=us-ascii\r\n\r\n1\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// assert_eq!(head.charset(), Charset::Ascii);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn charset(&self) -> Charset {
         self.charset
     }
 
     /// Every header line, in order, as raw `(name, value)` bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain\r\n\r\n1\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// let (name, value) = head.headers().nth(1).unwrap();
+    /// assert_eq!((name, value), (&b"Content-Type"[..], &b"text/plain"[..]));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn headers(&self) -> Headers<'p> {
         Headers { rest: self.block }
     }
 
     /// The size of the header block, the final CRLF CRLF included.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+    /// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+    /// // The block ends with the blank line.
+    /// let block = "Content-Disposition: form-data; name=a\r\n\r\n";
+    /// assert_eq!(head.header_bytes() as usize, block.len());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn header_bytes(&self) -> u32 {
         self.block.len() as u32
@@ -306,24 +516,65 @@ impl<'p> ContentType<'p> {
     }
 
     /// The value as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n1\r\n--X--";
+    /// # let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// let ct = mp.parts()[0].content_type().unwrap();
+    /// assert_eq!(ct.raw(), b"text/plain; charset=utf-8");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn raw(&self) -> &'p [u8] {
         self.raw
     }
 
     /// The type, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n1\r\n--X--";
+    /// # let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// let ct = mp.parts()[0].content_type().unwrap();
+    /// assert_eq!(ct.type_(), "text");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn type_(&self) -> &'p str {
         core::str::from_utf8(self.media.type_()).unwrap_or("")
     }
 
     /// The subtype, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n1\r\n--X--";
+    /// # let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// let ct = mp.parts()[0].content_type().unwrap();
+    /// assert_eq!(ct.subtype(), "plain");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn subtype(&self) -> &'p str {
         core::str::from_utf8(self.media.subtype()).unwrap_or("")
     }
 
     /// Whether the type and subtype are these, ASCII case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n1\r\n--X--";
+    /// # let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// let ct = mp.parts()[0].content_type().unwrap();
+    /// assert!(ct.is("TEXT", "Plain"));
+    /// assert!(!ct.is("text", "html"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn is(&self, type_: &str, subtype: &str) -> bool {
         self.media.is(type_, subtype)
@@ -331,6 +582,17 @@ impl<'p> ContentType<'p> {
 
     /// A parameter's value by name (ASCII case-insensitive), without
     /// surrounding quotes; backslashes are literal, as browsers send them.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n1\r\n--X--";
+    /// # let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// let ct = mp.parts()[0].content_type().unwrap();
+    /// assert_eq!(ct.parameter("Charset"), Some(&b"utf-8"[..]));
+    /// assert_eq!(ct.parameter("boundary"), None);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn parameter(&self, name: &str) -> Option<&'p [u8]> {
         self.media
@@ -340,6 +602,18 @@ impl<'p> ContentType<'p> {
     }
 
     /// The `charset` parameter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::Charset;
+    ///
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n1\r\n--X--";
+    /// # let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// let ct = mp.parts()[0].content_type().unwrap();
+    /// assert_eq!(ct.charset(), Charset::Utf8);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn charset(&self) -> Charset {
         self.parameter("charset")
@@ -351,6 +625,18 @@ impl<'p> ContentType<'p> {
 /// the value trimmed.
 ///
 /// `Debug` prints the header names only: values carry file names.
+///
+/// # Examples
+///
+/// ```
+/// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+/// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+/// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\nContent-Type: text/plain\r\n\r\n1\r\n--X--";
+/// let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event else { unreachable!() };
+/// let names: Vec<&[u8]> = head.headers().map(|(name, _)| name).collect();
+/// assert_eq!(names, [&b"Content-Disposition"[..], &b"Content-Type"[..]]);
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[derive(Clone)]
 pub struct Headers<'p> {
     rest: &'p [u8],
@@ -444,10 +730,15 @@ pub(crate) enum Outcome {
 ///
 /// Feed it bytes as they arrive, in chunks of any size split at any byte;
 /// it returns one [`MultipartEvent`] per call and how many bytes it consumed. The
-/// events are identical for every split of the same body. It never
-/// allocates after construction and never rescans a byte: the delimiter
-/// search is a streaming Knuth-Morris-Pratt automaton with an eight-byte skip
-/// to the next CR.
+/// events are identical for every split of a body that parses; for a body
+/// that fails, the error is identical, though a split body may emit data
+/// before it that a whole one does not. It never allocates after
+/// construction. The delimiter search skips 32 bytes at a time to a line
+/// break followed by `-` and compares the delimiter there a word at a time;
+/// bytes that may start a delimiter at a chunk's end are carried and
+/// scanned again with the next chunk (at most 73 per boundary), so the
+/// search stays linear. The streaming automaton (a Knuth-Morris-Pratt
+/// table) only carries that state between chunks.
 ///
 /// The buffer holds the header block, the decoded field name, the decoded
 /// `filename*` (under `AcceptAlone`), the token, and the `_charset_` value:
@@ -633,6 +924,21 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     ///
     /// Every multipart error (see the crate's `docs/API.md`); `Poisoned`
     /// after any error until [`reset`](Self::reset).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+    /// // The first 10 bytes are not a whole header block: give more.
+    /// let step = parser.parse(&body[..10], false)?;
+    /// assert!(matches!(step.event, MultipartEvent::NeedInput));
+    /// let rest = &body[step.consumed..];
+    /// let step = parser.parse(rest, true)?;
+    /// assert!(matches!(step.event, MultipartEvent::PartStart(head) if head.name() == "a"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn parse<'p>(
         &'p mut self,
         input: &'p [u8],
@@ -648,6 +954,28 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     /// Discards the rest of the current part: its bytes are consumed and
     /// counted against the budgets but produce no `Data` events, and its
     /// summary has `skipped = true`. Outside a part it does nothing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=big\r\n\r\nunwanted\r\n--X--";
+    /// let step = parser.parse(body, true)?;
+    /// # assert!(matches!(step.event, MultipartEvent::PartStart(_)));
+    /// let mut rest = &body[step.consumed..];
+    /// parser.skip_part();
+    /// let summary = loop {
+    ///     let step = parser.parse(rest, true)?;
+    ///     rest = &rest[step.consumed..];
+    ///     assert!(!matches!(step.event, MultipartEvent::Data(_)));
+    ///     if let MultipartEvent::PartEnd(summary) = step.event {
+    ///         break summary;
+    ///     }
+    /// };
+    /// assert!(summary.skipped);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn skip_part(&mut self) {
         if matches!(self.state, State::Body) {
             self.flags |= SKIPPING;
@@ -656,6 +984,20 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
 
     /// Returns the parser to its initial state for a new body, wipes its
     /// buffer, and clears the poisoned state. It never allocates.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// assert!(parser.parse(b"no delimiter here", true).is_err());
+    /// // Poisoned until reset; reset also takes the next body's boundary.
+    /// assert!(parser.parse(b"", true).is_err());
+    /// parser.reset(Boundary::new(b"Y")?);
+    /// let body = b"--Y\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--Y--";
+    /// assert!(matches!(parser.parse(body, true)?.event, MultipartEvent::PartStart(_)));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn reset(&mut self, boundary: Boundary) {
         self.wipe_used();
         let limits = self.limits;
@@ -688,42 +1030,129 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     }
 
     /// Body bytes consumed so far.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+    /// let consumed = parser.parse(body, true)?.consumed;
+    /// assert_eq!(parser.bytes_seen(), consumed as u64);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn bytes_seen(&self) -> u64 {
         self.bytes_seen
     }
 
     /// Parts started so far.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+    /// parser.parse(body, true)?;
+    /// assert_eq!(parser.parts_seen(), 1);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn parts_seen(&self) -> u32 {
         self.parts
     }
 
     /// File parts counted so far.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+    /// parser.parse(body, true)?;
+    /// assert_eq!(parser.files_seen(), 1);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn files_seen(&self) -> u32 {
         self.files
     }
 
     /// Whether the close delimiter was read.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// let mut rest = &b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--"[..];
+    /// assert!(!parser.is_done());
+    /// while !parser.is_done() {
+    ///     let step = parser.parse(rest, true)?;
+    ///     rest = &rest[step.consumed..];
+    /// }
+    /// // The close delimiter was read.
+    /// assert!(rest.is_empty());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn is_done(&self) -> bool {
         self.state == State::Epilogue
     }
 
     /// The limits the parser was built with.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Boundary, Limits, MultipartParser, Policy};
+    ///
+    /// let limits = Limits::DEFAULT.with_max_part_header_bytes(1024);
+    /// let parser = MultipartParser::new(Boundary::new(b"X")?, &limits, &Policy::DEFAULT)?;
+    /// assert_eq!(parser.limits(), &limits);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn limits(&self) -> &Limits {
         &self.limits
     }
 
     /// The policy the parser was built with.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Boundary, Limits, MultipartParser, Policy, TokenField};
+    ///
+    /// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf"));
+    /// let parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &policy)?;
+    /// assert_eq!(parser.policy(), &policy);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn policy(&self) -> &Policy {
         &self.policy
     }
 
     /// The token field's value, once its part has ended.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Boundary, Limits, MultipartParser, Policy, TokenField};
+    ///
+    /// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf"));
+    /// let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &policy)?;
+    /// let mut rest = &b"--X\r\nContent-Disposition: form-data; name=csrf\r\n\r\nabc123\r\n--X--"[..];
+    /// while !parser.is_done() {
+    ///     let step = parser.parse(rest, true)?;
+    ///     rest = &rest[step.consumed..];
+    /// }
+    /// assert_eq!(parser.captured_token(), Some("abc123"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn captured_token(&self) -> Option<&str> {
         if self.token != Token::Captured {
@@ -738,6 +1167,20 @@ impl<B: AsMut<[u8]> + AsRef<[u8]>> MultipartParser<B> {
     }
 
     /// The value of the last complete `_charset_` field.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Charset, Limits, MultipartEvent, MultipartParser, PartKind, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// let mut rest = &b"--X\r\nContent-Disposition: form-data; name=_charset_\r\n\r\nutf-8\r\n--X--"[..];
+    /// while !parser.is_done() {
+    ///     let step = parser.parse(rest, true)?;
+    ///     rest = &rest[step.consumed..];
+    /// }
+    /// assert_eq!(parser.declared_charset(), Some(&b"utf-8"[..]));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn declared_charset(&self) -> Option<&[u8]> {
         if !self.charset_done {

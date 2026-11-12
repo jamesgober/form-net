@@ -31,6 +31,21 @@ use crate::multipart::filename::{FileName, FileNameSource};
 use crate::multipart::parser::{ContentType, MultipartParser, PartHead};
 
 /// What went wrong with storage.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{FormError, Store, StoreError};
+///
+/// # let dir = std::env::temp_dir().join(format!("form-net-doc-store-error-{}", std::process::id()));
+/// # std::fs::create_dir_all(&dir).unwrap();
+/// std::fs::write(dir.join("file"), b"")?;
+/// let e = Store::in_dir(dir.join("file")).unwrap_err();
+/// assert!(matches!(e, FormError::Store { reason: StoreError::NotADirectory }));
+/// assert_eq!(e.code(), "store.not_a_directory");
+/// # std::fs::remove_dir_all(&dir).unwrap();
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreError {
@@ -77,6 +92,24 @@ impl StoreError {
 /// | Windows | delete-on-close, no sharing | deleted on drop |
 /// | after a crash | nothing is left | leftovers are removed by `sweep` (0.5) |
 /// | `persist` | a copy | a hard link on the same file system, else a copy |
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Limits, Policy, SpillMode, Store};
+///
+/// # let dir = std::env::temp_dir().join(format!("form-net-doc-spill-mode-{}", std::process::id()));
+/// # std::fs::create_dir_all(&dir).unwrap();
+/// let store = Store::in_dir(&dir)?.memory_threshold(0).mode(SpillMode::Named);
+/// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+/// let upload = form_net::read_multipart_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store)?;
+/// let path = upload.file("f").unwrap().path().unwrap().to_owned();
+/// assert!(path.starts_with(&dir));
+/// drop(upload); // a named file is deleted when it drops
+/// assert!(!path.exists());
+/// # std::fs::remove_dir_all(&dir).unwrap();
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum SpillMode {
@@ -88,6 +121,21 @@ pub enum SpillMode {
 }
 
 /// A snapshot of what a store holds, read from atomic counters.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Limits, Policy, Store};
+///
+/// let store = Store::memory_only();
+/// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+/// let upload = form_net::read_multipart_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store)?;
+/// let stats = store.stats();
+/// assert_eq!((stats.files_in_memory, stats.bytes_in_memory, stats.files_on_disk), (1, 5, 0));
+/// drop(upload);
+/// assert_eq!(store.stats().files_in_memory, 0);
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StoreStats {
@@ -240,6 +288,17 @@ impl Store {
     ///
     /// `Io { kind }` when the directory cannot be created; `Random` when the
     /// OS random source fails (no predictable fallback name).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let store = form_net::Store::temp()?;
+    /// let dir = store.dir().unwrap().to_owned();
+    /// assert!(dir.is_dir());
+    /// drop(store); // its own directory goes with it, once empty
+    /// assert!(!dir.exists());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn temp() -> Result<Store, FormError> {
         let dir = temp::create_private_dir()?;
         Ok(Store::with(Some(dir), true, false))
@@ -253,6 +312,19 @@ impl Store {
 
     /// A store that never touches the file system: a file larger than
     /// `max_file_bytes` is refused, never spilled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Policy, Store};
+    ///
+    /// let store = Store::memory_only();
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store)?;
+    /// assert!(upload.file("f").unwrap().is_in_memory());
+    /// assert_eq!(store.dir(), None);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn memory_only() -> Store {
         let mut s = Store::with(None, false, true);
@@ -282,7 +354,19 @@ impl Store {
     }
 
     /// Keeps each file in memory up to `bytes`; a file whose next write would
-    /// pass it spills first. `0` spills every file at its first byte.
+    /// pass it spills first. `0` spills every file at its first byte. On a
+    /// [`memory_only`](Self::memory_only) store it changes nothing: that
+    /// store never spills, and a file larger than `max_file_bytes` is
+    /// refused (D-160).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let dir = std::env::temp_dir();
+    /// let store = form_net::Store::in_dir(&dir)?.memory_threshold(16 * 1024);
+    /// assert_eq!(store.dir(), Some(dir.as_path()));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn memory_threshold(mut self, bytes: u64) -> Store {
         if !self.memory_only {
@@ -293,6 +377,14 @@ impl Store {
 
     /// Caps the bytes one request may put on disk (`Limit { Disk }` beyond).
     /// Unset, the cap is the request's `max_body_bytes`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let store = form_net::Store::temp()?.max_disk_bytes(50 * 1024 * 1024);
+    /// assert!(store.dir().is_some());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn max_disk_bytes(mut self, bytes: u64) -> Store {
         self.max_disk = Some(bytes);
@@ -300,6 +392,24 @@ impl Store {
     }
 
     /// How spilled files are kept.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Policy, SpillMode, Store};
+    ///
+    /// # let dir = std::env::temp_dir().join(format!("form-net-doc-mode-{}", std::process::id()));
+    /// # std::fs::create_dir_all(&dir).unwrap();
+    /// let store = Store::in_dir(&dir)?.memory_threshold(0).mode(SpillMode::Anonymous);
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store)?;
+    /// let file = upload.file("f").unwrap();
+    /// // Spilled, and nameless from the moment it was created.
+    /// assert_eq!((file.is_in_memory(), file.path()), (false, None));
+    /// # drop(upload);
+    /// # std::fs::remove_dir_all(&dir).unwrap();
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn mode(mut self, mode: SpillMode) -> Store {
         self.mode = mode;
@@ -307,12 +417,33 @@ impl Store {
     }
 
     /// The directory files spill into, once it exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::Store;
+    ///
+    /// # let dir = std::env::temp_dir().join(format!("form-net-doc-dir-{}", std::process::id()));
+    /// # std::fs::create_dir_all(&dir).unwrap();
+    /// assert_eq!(Store::in_dir(&dir)?.dir(), Some(dir.as_path()));
+    /// assert_eq!(Store::memory_only().dir(), None);
+    /// # std::fs::remove_dir_all(&dir).unwrap();
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn dir(&self) -> Option<&Path> {
         self.shared.dir.get().map(PathBuf::as_path)
     }
 
     /// Deletions that failed during a drop (they cannot be returned).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let store = form_net::Store::memory_only();
+    /// assert_eq!(store.cleanup_failures(), 0);
+    /// assert_eq!(store.cleanup_failures(), store.stats().cleanup_failures);
+    /// ```
     #[must_use]
     pub fn cleanup_failures(&self) -> u64 {
         self.shared
@@ -322,6 +453,24 @@ impl Store {
     }
 
     /// What the store holds now.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Policy, Store};
+    ///
+    /// # let dir = std::env::temp_dir().join(format!("form-net-doc-stats-{}", std::process::id()));
+    /// # std::fs::create_dir_all(&dir).unwrap();
+    /// let store = Store::in_dir(&dir)?.memory_threshold(0);
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store)?;
+    /// let stats = store.stats();
+    /// assert_eq!((stats.files_on_disk, stats.bytes_on_disk, stats.files_spilled), (1, 5, 1));
+    /// drop(upload);
+    /// assert_eq!((store.stats().files_on_disk, store.stats().files_spilled), (0, 1));
+    /// # std::fs::remove_dir_all(&dir).unwrap();
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn stats(&self) -> StoreStats {
         let c = &self.shared.counters;
@@ -382,6 +531,20 @@ impl Store {
     }
 
     /// The `Sink` that stores the files of one request under `limits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Boundary, Driver, Limits, MultipartParser, NoInspector, Policy, Progress, Store};
+    ///
+    /// let store = Store::memory_only();
+    /// let parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// let mut driver = Driver::new(parser, store.sink(&Limits::DEFAULT));
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let (_, progress) = driver.push(body, true, &mut NoInspector)?;
+    /// assert!(matches!(progress, Progress::File(ref f) if f.bytes() == Some(&b"hello"[..])));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn sink(&self, limits: &Limits) -> StoreSink {
         StoreSink {
@@ -413,6 +576,22 @@ struct Current {
 }
 
 /// The [`Sink`] a [`Store`] hands out for one request.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Boundary, Driver, Limits, MultipartParser, NoInspector, Policy, Progress, Store};
+///
+/// let store = Store::memory_only();
+/// let parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+/// let mut driver = Driver::new(parser, store.sink(&Limits::DEFAULT));
+/// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+/// let (_, progress) = driver.push(body, true, &mut NoInspector)?;
+/// // The sink's output is a `StoredFile`, counted by the store.
+/// assert!(matches!(progress, Progress::File(ref f) if f.name() == "f"));
+/// assert_eq!(store.stats().files_in_memory, 1);
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 pub struct StoreSink {
     budget: Option<Arc<dyn SpillBudget>>,
     shared: Arc<Shared>,
@@ -673,12 +852,32 @@ impl StoredFile {
     }
 
     /// The form field name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// assert_eq!(file.name(), "f");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
     /// The client's file name: a hint, never a path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// assert_eq!(file.filename().unwrap().as_str()?, "a.txt");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn filename(&self) -> Option<FileName<'_>> {
         self.filename
@@ -687,30 +886,81 @@ impl StoredFile {
     }
 
     /// The declared content type: a hint, never trusted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\nContent-Type: text/plain\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// assert!(file.content_type().unwrap().is("text", "plain"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn content_type(&self) -> Option<ContentType<'_>> {
         self.content_type.as_deref().and_then(ContentType::parse)
     }
 
     /// The length in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// assert_eq!(file.len(), 5);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> u64 {
         self.len
     }
 
     /// Whether the file is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\n\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// assert!(file.is_empty());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Whether the file is held in memory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// // Files up to the store's memory threshold never reach the disk.
+    /// assert!(file.is_in_memory());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn is_in_memory(&self) -> bool {
         matches!(self.place, Place::Memory(_))
     }
 
     /// The bytes, while the file is in memory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// assert_eq!(file.bytes(), Some(&b"hello"[..]));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn bytes(&self) -> Option<&[u8]> {
         match &self.place {
@@ -725,6 +975,23 @@ impl StoredFile {
     /// # Errors
     ///
     /// `Io { kind }` when the file is gone.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Read;
+    ///
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// let (mut a, mut b) = (file.reader()?, file.reader()?);
+    /// let mut first = [0u8; 2];
+    /// a.read_exact(&mut first)?;
+    /// let mut all = Vec::new();
+    /// b.read_to_end(&mut all)?;
+    /// assert_eq!((&first, all.as_slice()), (b"he", &b"hello"[..]));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn reader(&self) -> Result<StoredReader<'_>, FormError> {
         match &self.place {
             Place::Gone => Err(FormError::Io {
@@ -740,6 +1007,17 @@ impl StoredFile {
     /// # Errors
     ///
     /// `Limit { FileSize }`; `Io { kind }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.file("f").unwrap();
+    /// assert_eq!(file.read_to_vec(1024)?, b"hello");
+    /// assert_eq!(file.read_to_vec(4).unwrap_err().code(), "limit.file_size");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn read_to_vec(&self, max: u64) -> Result<Vec<u8>, FormError> {
         if self.len > max {
             return Err(FormError::limit(Limit::FileSize, Location::NONE));
@@ -752,6 +1030,23 @@ impl StoredFile {
     }
 
     /// The temporary file's path, in `SpillMode::Named` only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Policy, SpillMode, Store};
+    ///
+    /// # let dir = std::env::temp_dir().join(format!("form-net-doc-path-{}", std::process::id()));
+    /// # std::fs::create_dir_all(&dir).unwrap();
+    /// let store = Store::in_dir(&dir)?.memory_threshold(0).mode(SpillMode::Named);
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &Policy::DEFAULT, &store)?;
+    /// let path = upload.file("f").unwrap().path().unwrap();
+    /// assert!(path.is_file() && path.parent() == Some(dir.as_path()));
+    /// # drop(upload);
+    /// # std::fs::remove_dir_all(&dir).unwrap();
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn path(&self) -> Option<&Path> {
         match &self.place {
@@ -780,13 +1075,55 @@ impl StoredFile {
     /// overwrites: a named file is hard-linked when `dest` is on the same file
     /// system and copied otherwise; anonymous and memory files are copied
     /// into `dest` opened with `create_new`. Whether to fsync `dest` and its
-    /// directory is the caller's choice. On error the temporary file is
-    /// deleted like any dropped file.
+    /// directory is the caller's choice.
+    ///
+    /// On Unix the persisted file is owner-only (`0600`) however it was
+    /// made, as the temporary file was; widen it after `persist` if others
+    /// must read it. On Windows it takes the destination directory's
+    /// inherited ACL (D-155).
+    ///
+    /// On failure the upload is handed back in the error, untouched, so the
+    /// caller can try another name; `?` into a `FormError` drops it, which
+    /// deletes the temporary file (D-154).
     ///
     /// # Errors
     ///
-    /// `Store { DestinationExists }`; `Io { kind }`.
-    pub fn persist(mut self, dest: &Path) -> Result<(), FormError> {
+    /// `Store { DestinationExists }`; `Io { kind }`; each with the file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let dir = std::env::temp_dir().join(format!("form-net-persist-doc-{}", std::process::id()));
+    /// # std::fs::create_dir_all(&dir).unwrap();
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let mut upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = upload.take_file("f").unwrap();
+    /// std::fs::write(dir.join("a.txt"), b"taken")?;
+    /// // The name is taken: the upload comes back, and another name works.
+    /// let file = match file.persist(&dir.join("a.txt")) {
+    ///     Ok(()) => unreachable!(),
+    ///     Err(e) => {
+    ///         assert_eq!(e.error().code(), "store.destination_exists");
+    ///         e.into_file()
+    ///     }
+    /// };
+    /// file.persist(&dir.join("a (2).txt"))?;
+    /// assert_eq!(std::fs::read(dir.join("a (2).txt"))?, b"hello");
+    /// # std::fs::remove_dir_all(&dir).unwrap();
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn persist(mut self, dest: &Path) -> Result<(), PersistError> {
+        match self.persist_ref(dest) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(PersistError {
+                error,
+                file: alloc::boxed::Box::new(self),
+            }),
+        }
+    }
+
+    /// `persist`, leaving `self` intact on failure.
+    fn persist_ref(&mut self, dest: &Path) -> Result<(), FormError> {
         let exists = |e: io::Error| {
             if e.kind() == io::ErrorKind::AlreadyExists {
                 FormError::Store {
@@ -816,19 +1153,27 @@ impl StoredFile {
                     }
                     return Ok(());
                 }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Err(exists(e)),
-                Err(_) => {
-                    // Another file system: copy below, from the name.
+                Err(e) => {
+                    // Reopened either way: on `AlreadyExists` the upload goes
+                    // back to the caller readable; on another file system it
+                    // is copied below, from the name.
                     let f = File::open(&*p).map_err(|e| temp::io(&e))?;
                     *file = Some(f);
+                    if e.kind() == io::ErrorKind::AlreadyExists {
+                        return Err(exists(e));
+                    }
                 }
             }
         }
-        let mut out = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(dest)
-            .map_err(exists)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // Owner-only, as a hard link to the 0600 temporary file is (D-155).
+            options.mode(0o600);
+        }
+        let mut out = options.open(dest).map_err(exists)?;
         let mut buf = [0u8; 64 * 1024];
         let mut hi = 0usize;
         let mut pos = 0u64;
@@ -892,6 +1237,93 @@ fn wipe_meta(
     }
 }
 
+/// A failed [`StoredFile::persist`]: the error, and the upload, untouched,
+/// so the caller can try another name (D-154). Converting it into a
+/// `FormError` (as `?` does) drops the file, which deletes it.
+///
+/// # Examples
+///
+/// ```
+/// fn save(file: form_net::StoredFile, dest: &std::path::Path) -> Result<(), form_net::FormError> {
+///     file.persist(dest)?; // on failure the file is dropped and deleted
+///     Ok(())
+/// }
+/// ```
+pub struct PersistError {
+    error: FormError,
+    file: alloc::boxed::Box<StoredFile>,
+}
+
+impl PersistError {
+    /// Why `persist` failed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let dir = std::env::temp_dir().join(format!("form-net-doc-persist-error-{}", std::process::id()));
+    /// # std::fs::create_dir_all(&dir).unwrap();
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let mut upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// std::fs::write(dir.join("a.txt"), b"taken")?;
+    /// let e = upload.take_file("f").unwrap().persist(&dir.join("a.txt")).unwrap_err();
+    /// assert_eq!(e.error().code(), "store.destination_exists");
+    /// # drop(e);
+    /// # std::fs::remove_dir_all(&dir).unwrap();
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub const fn error(&self) -> FormError {
+        self.error
+    }
+
+    /// The upload, to persist under another name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let dir = std::env::temp_dir().join(format!("form-net-doc-into-file-{}", std::process::id()));
+    /// # std::fs::create_dir_all(&dir).unwrap();
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let mut upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// std::fs::write(dir.join("a.txt"), b"taken")?;
+    /// let e = upload.take_file("f").unwrap().persist(&dir.join("a.txt")).unwrap_err();
+    /// e.into_file().persist(&dir.join("b.txt"))?;
+    /// assert_eq!(std::fs::read(dir.join("b.txt"))?, b"hello");
+    /// # std::fs::remove_dir_all(&dir).unwrap();
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn into_file(self) -> StoredFile {
+        *self.file
+    }
+}
+
+impl From<PersistError> for FormError {
+    fn from(e: PersistError) -> FormError {
+        e.error
+    }
+}
+
+impl fmt::Debug for PersistError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PersistError")
+            .field("error", &self.error)
+            .field("file", &self.file)
+            .finish()
+    }
+}
+
+impl fmt::Display for PersistError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl std::error::Error for PersistError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
 impl Drop for StoredFile {
     fn drop(&mut self) {
         wipe_meta(&mut self.name, &mut self.filename, &mut self.content_type);
@@ -929,6 +1361,21 @@ impl Drop for StoredFile {
 }
 
 /// A reader over a [`StoredFile`]; `Read + Seek` with its own position.
+///
+/// # Examples
+///
+/// ```
+/// use std::io::{Read, Seek, SeekFrom};
+///
+/// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+/// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+/// let mut reader = upload.file("f").unwrap().reader()?;
+/// reader.seek(SeekFrom::Start(2))?;
+/// let mut rest = String::new();
+/// reader.read_to_string(&mut rest)?;
+/// assert_eq!(rest, "llo");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug)]
 pub struct StoredReader<'f> {
     file: &'f StoredFile,
@@ -1031,6 +1478,17 @@ impl Upload {
     }
 
     /// The first text field named `name`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\na\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\nb\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// assert_eq!(upload.field("title"), Some("Holiday"));
+    /// assert_eq!(upload.field("tag"), Some("a"));
+    /// assert_eq!(upload.field("missing"), None);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn field(&self, name: &str) -> Option<&str> {
         self.spans
@@ -1044,6 +1502,16 @@ impl Upload {
     /// # Errors
     ///
     /// `Extract { Duplicate }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\na\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\nb\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// assert_eq!(upload.field_one("title")?, Some("Holiday"));
+    /// assert_eq!(upload.field_one("tag").unwrap_err().code(), "extract.duplicate");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn field_one(&self, name: &str) -> Result<Option<&str>, FormError> {
         let mut found = None;
         for s in self.spans.iter().filter(|s| self.slice(s.name) == name) {
@@ -1059,6 +1527,15 @@ impl Upload {
     }
 
     /// Every text field named `name`, in body order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\na\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\nb\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// assert_eq!(upload.fields("tag").collect::<Vec<_>>(), ["a", "b"]);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn fields<'u>(&'u self, name: &'u str) -> impl Iterator<Item = &'u str> + 'u {
         self.spans
             .iter()
@@ -1067,6 +1544,16 @@ impl Upload {
     }
 
     /// Every text field `(name, value)`, in body order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\na\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\nb\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let pairs: Vec<_> = upload.iter().collect();
+    /// assert_eq!(pairs, [("title", "Holiday"), ("tag", "a"), ("tag", "b")]);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.spans
             .iter()
@@ -1074,23 +1561,65 @@ impl Upload {
     }
 
     /// The first file named `name`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\n1\r\n--X\r\nContent-Disposition: form-data; name=f; filename=b.txt\r\n\r\n22\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// assert_eq!(upload.file("f").map(|f| f.len()), Some(1));
+    /// assert!(upload.file("title").is_none(), "a text field is not a file");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn file(&self, name: &str) -> Option<&StoredFile> {
         self.files.iter().find(|f| f.name() == name)
     }
 
     /// Every file named `name`, in body order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\n1\r\n--X\r\nContent-Disposition: form-data; name=f; filename=b.txt\r\n\r\n22\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let lens: Vec<u64> = upload.files("f").map(|f| f.len()).collect();
+    /// assert_eq!(lens, [1, 2]);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn files<'u>(&'u self, name: &'u str) -> impl Iterator<Item = &'u StoredFile> + 'u {
         self.files.iter().filter(move |f| f.name() == name)
     }
 
     /// Removes and returns the first file named `name`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\n1\r\n--X\r\nContent-Disposition: form-data; name=f; filename=b.txt\r\n\r\n22\r\n--X--";
+    /// let mut upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let first = upload.take_file("f").unwrap();
+    /// assert_eq!(first.bytes(), Some(&b"1"[..]));
+    /// assert_eq!(upload.file("f").map(|f| f.len()), Some(2));
+    /// assert_eq!(upload.file_count(), 1);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn take_file(&mut self, name: &str) -> Option<StoredFile> {
         let i = self.files.iter().position(|f| f.name() == name)?;
         Some(self.files.remove(i))
     }
 
     /// Every file, in body order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\n1\r\n--X\r\nContent-Disposition: form-data; name=f; filename=b.txt\r\n\r\n22\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let files = upload.into_files();
+    /// assert_eq!(files.iter().map(|f| f.len()).collect::<Vec<_>>(), [1, 2]);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn into_files(mut self) -> Vec<StoredFile> {
         core::mem::take(&mut self.files)
@@ -1149,18 +1678,49 @@ impl Upload {
     }
 
     /// The anti-forgery token field's value, when a token field was set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Policy, Store, TokenField};
+    ///
+    /// let store = Store::memory_only();
+    /// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf"));
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=csrf\r\n\r\nt0k\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let upload = form_net::read_multipart_with(b"multipart/form-data; boundary=X", &body[..], &Limits::DEFAULT, &policy, &store)?;
+    /// assert_eq!(upload.captured_token(), Some("t0k"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn captured_token(&self) -> Option<&str> {
         self.token.as_deref()
     }
 
     /// The bytes of all text values together.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\na\r\n--X\r\nContent-Disposition: form-data; name=tag\r\n\r\nb\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// assert_eq!(upload.text_len(), 9); // "Holiday", "a", "b"
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn text_len(&self) -> u64 {
         self.spans.iter().map(|s| s.value.1 as u64).sum()
     }
 
     /// The number of files.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\n1\r\n--X\r\nContent-Disposition: form-data; name=f; filename=b.txt\r\n\r\n22\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// assert_eq!(upload.file_count(), 2);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn file_count(&self) -> usize {
         self.files.len()
@@ -1214,6 +1774,19 @@ impl UploadSession {
     ///
     /// `UnsupportedMediaType` and the boundary errors of
     /// [`FormKind::detect`](crate::FormKind::detect); `InvalidLimits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Policy, Store, UploadSession};
+    ///
+    /// let (store, policy) = (Store::memory_only(), Policy::DEFAULT);
+    /// let session = UploadSession::new(b"multipart/form-data; boundary=X", &Limits::DEFAULT, &policy, &store)?;
+    /// assert_eq!(session.bytes_seen(), 0);
+    /// let e = UploadSession::new(b"text/plain", &Limits::DEFAULT, &policy, &store).unwrap_err();
+    /// assert_eq!(e.code(), "unsupported_media_type");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn new(
         content_type: &[u8],
         limits: &Limits,
@@ -1237,6 +1810,22 @@ impl UploadSession {
     ///
     /// Every multipart error, `Refused`, `Io`, `Store`, `Limit { Disk }`;
     /// `Poisoned` after an error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, NoInspector, Policy, Store, UploadSession};
+    ///
+    /// let (store, policy) = (Store::memory_only(), Policy::DEFAULT);
+    /// let mut session = UploadSession::new(b"multipart/form-data; boundary=X", &Limits::DEFAULT, &policy, &store)?;
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// for chunk in body.chunks(7) {
+    ///     session.push(chunk, &mut NoInspector)?;
+    /// }
+    /// let upload = session.finish(&mut NoInspector)?;
+    /// assert_eq!(upload.file("f").unwrap().bytes(), Some(&b"hello"[..]));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn push<I: Inspector>(&mut self, chunk: &[u8], inspector: &mut I) -> Result<(), FormError> {
         self.feed(chunk, false, inspector)
     }
@@ -1247,6 +1836,20 @@ impl UploadSession {
     ///
     /// `Syntax { Truncated }` if the close delimiter was not seen; as
     /// [`push`](Self::push).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, NoInspector, Policy, Store, UploadSession};
+    ///
+    /// let (store, policy) = (Store::memory_only(), Policy::DEFAULT);
+    /// let mut session = UploadSession::new(b"multipart/form-data; boundary=X", &Limits::DEFAULT, &policy, &store)?;
+    /// // The body stops before its close delimiter.
+    /// session.push(b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1", &mut NoInspector)?;
+    /// let e = session.finish(&mut NoInspector).unwrap_err();
+    /// assert_eq!(e.code(), "syntax.truncated");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn finish<I: Inspector>(mut self, inspector: &mut I) -> Result<Upload, FormError> {
         if self.failed {
             return Err(FormError::Poisoned);
@@ -1260,12 +1863,40 @@ impl UploadSession {
     }
 
     /// The token field's value, once its part has ended.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, NoInspector, Policy, Store, TokenField, UploadSession};
+    ///
+    /// let store = Store::memory_only();
+    /// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf"));
+    /// let mut session = UploadSession::new(b"multipart/form-data; boundary=X", &Limits::DEFAULT, &policy, &store)?;
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=csrf\r\n\r\nt0k\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// session.push(body, &mut NoInspector)?;
+    /// // Known before `finish`, so the token can be checked first.
+    /// assert_eq!(session.captured_token(), Some("t0k"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn captured_token(&self) -> Option<&str> {
         self.driver.parser().captured_token()
     }
 
     /// Body bytes consumed so far.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, NoInspector, Policy, Store, UploadSession};
+    ///
+    /// let (store, policy) = (Store::memory_only(), Policy::DEFAULT);
+    /// let mut session = UploadSession::new(b"multipart/form-data; boundary=X", &Limits::DEFAULT, &policy, &store)?;
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// session.push(&body[..10], &mut NoInspector)?;
+    /// assert_eq!(session.bytes_seen(), 10);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn bytes_seen(&self) -> u64 {
         self.driver.parser().bytes_seen()
@@ -1452,7 +2083,8 @@ pub fn read_multipart_inspected<R: Read, I: Inspector>(
             }
             Err(e) => {
                 buf.failed();
-                let err = temp::io(&e);
+                // The client's side, not the store's (D-159).
+                let err = FormError::BodyRead { kind: e.kind() };
                 inspector.failed(&err);
                 return Err(err);
             }
@@ -1475,8 +2107,15 @@ impl FileName<'_> {
     /// `path_lib::sanitize`, which replaces separators, control characters,
     /// Windows-reserved characters and device names, and trims trailing dots
     /// and spaces. With the `unicode` feature the name is put in Unicode NFC
-    /// first, so an NFD name from a macOS client sanitizes to the same bytes. It is still a name the client chose: never let it
-    /// overwrite anything (`StoredFile::persist` refuses to).
+    /// first, so an NFD name from a macOS client sanitizes to the same bytes.
+    ///
+    /// The result is at most 255 bytes. A longer name loses bytes from the
+    /// end of its stem, never its extension: when
+    /// [`extension`](Self::extension) is `Some(e)`, the result ends with
+    /// `.e`, so the name an extension check saw is the name saved (D-156). A
+    /// leading `.` becomes `_`, so `.htaccess` is never kept as a dot file
+    /// (D-157). It is still a name the client chose: never let it overwrite
+    /// anything (`StoredFile::persist` refuses to).
     ///
     /// # Errors
     ///
@@ -1498,15 +2137,60 @@ impl FileName<'_> {
         #[cfg(feature = "unicode")]
         let text = unicode_lang::normalize(text.as_ref(), unicode_lang::Form::Nfc);
         let text: &str = text.as_ref();
-        if text.is_ascii() {
-            return Ok(path_lib::sanitize(text));
-        }
-        let visible: String = text
-            .chars()
-            .map(|c| if is_default_ignorable(c) { '_' } else { c })
-            .collect();
-        Ok(path_lib::sanitize(visible))
+        let out = if text.is_ascii() {
+            path_lib::sanitize(text)
+        } else {
+            let visible: String = text
+                .chars()
+                .map(|c| if is_default_ignorable(c) { '_' } else { c })
+                .collect();
+            path_lib::sanitize(visible)
+        };
+        Ok(keep_extension(no_leading_dot(out), self.extension()))
     }
+}
+
+/// The longest name `sanitized` returns, in bytes: what common file systems
+/// allow for one name, and what `path_lib::sanitize` cuts to.
+const MAX_NAME_BYTES: usize = 255;
+
+/// A leading `.` replaced by `_`: a dot file (`.htaccess`, `.user.ini`) can
+/// change how a directory is served (D-157).
+fn no_leading_dot(mut name: String) -> String {
+    if name.starts_with('.') {
+        name.replace_range(..1, "_");
+    }
+    name
+}
+
+/// `name`, ending with `.ext` when the client's name had that extension.
+/// `path_lib::sanitize` keeps the first 255 bytes, so a long name can lose
+/// its extension or end in another one (`A…A.php.jpg` saved as `A…A.php`);
+/// here the stem is cut instead (D-156).
+fn keep_extension(name: String, ext: Option<&str>) -> String {
+    let Some(ext) = ext else {
+        return name;
+    };
+    let tail_len = ext.len().saturating_add(1);
+    let has_tail = name
+        .len()
+        .checked_sub(tail_len)
+        .and_then(|i| name.get(i..))
+        .is_some_and(|tail| tail.strip_prefix('.') == Some(ext));
+    if has_tail {
+        return name;
+    }
+    let mut keep = name.len().min(MAX_NAME_BYTES.saturating_sub(tail_len));
+    while keep > 0 && !name.is_char_boundary(keep) {
+        keep = keep.saturating_sub(1);
+    }
+    let mut out = String::with_capacity(keep.saturating_add(tail_len));
+    out.push_str(name.get(..keep).unwrap_or(""));
+    out.push('.');
+    out.push_str(ext);
+    // Once more through the sanitizer: the cut can leave a reserved name or
+    // a trailing space before the dot. The result fits, so nothing is cut.
+    no_leading_dot(path_lib::sanitize(out))
 }
 
 /// Unicode's `Default_Ignorable_Code_Point` property (DerivedCoreProperties):

@@ -209,12 +209,32 @@ fn test_persist_never_overwrites() {
             let mut up = upload(&store, &body(&[("f", b"other")])).unwrap();
             let e = up.take_file("f").unwrap().persist(&dest).unwrap_err();
             assert_eq!(
-                e,
+                e.error(),
                 FormError::Store {
                     reason: StoreError::DestinationExists
                 }
             );
             assert_eq!(std::fs::read(&dest).unwrap(), b"payload", "not overwritten");
+            // D-154 (independent review F-4): the upload comes back intact,
+            // so another name can be tried.
+            let again = e.into_file();
+            assert_eq!(
+                again.read_to_vec(64).unwrap(),
+                b"other",
+                "{mode:?} {threshold}"
+            );
+            let other = dir.0.join(format!("kept-{mode:?}-{threshold}-2.bin"));
+            again.persist(&other).unwrap();
+            assert_eq!(std::fs::read(&other).unwrap(), b"other");
+            // D-155 (F-7): owner-only on Unix however `persist` made it.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                for p in [&dest, &other] {
+                    let m = std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+                    assert_eq!(m, 0o600, "{mode:?} {threshold} {p:?}");
+                }
+            }
             drop(up);
         }
     }

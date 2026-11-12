@@ -13,6 +13,44 @@
 
 ---
 
+## [0.11.0] - 2026-11-11
+
+Review: an independent review of 0.9.2 found 1 medium and 8 low issues;
+each is fixed with a regression test (D-149 to D-161). Breaking for
+`persist` callers that name its error type; see the release notes.
+
+### Added
+
+- `PersistError`: a failed `StoredFile::persist` gives the upload back
+  (`into_file`), so another name can be tried (D-154).
+- `FormError::BodyRead { kind }`, a 400, for a failure reading the
+  request body; `Io` stays the writer and the file system (D-159).
+- A runnable example on every public item (D-153).
+
+### Changed
+
+- `StoredFile::persist` returns `Result<(), PersistError>`; `?` into a
+  `FormError` works as before (D-154).
+- A persisted file is owner-only on Unix however `persist` made it
+  (D-155).
+- `sweep` also reaches the private directories `Store::temp` makes
+  (D-158).
+- Text under a `us-ascii` label must be ASCII; a urlencoded `charset`
+  other than UTF-8 is refused (D-150).
+
+### Fixed
+
+- `FileName::sanitized` could cut a long name's extension, or end it in
+  another one; it now keeps the extension `extension` reports (D-156).
+- Dot files came through `sanitized`, and `extension` of `.htaccess`
+  was `htaccess` (D-157).
+- A file name holding `name=` after a letter (`Surname=Smith.pdf`)
+  failed the request (D-152).
+- Stale parser and architecture claims (D-151); `memory_threshold` on a
+  memory-only store (D-160).
+
+---
+
 ## [0.10.0] - 2026-11-11
 
 Simplicity: one name for each lookup, one pattern for each entry point.
@@ -436,7 +474,8 @@ The scaffold and the plan. No functional code yet.
 - `dev/PLAN.md` (purpose, scope, architecture, threats, ecosystem, open
   decisions, decision log), `dev/DIRECTIVES.md`, and `dev/ROADMAP.md`.
 
-[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/jamesgober/form-net/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/jamesgober/form-net/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/jamesgober/form-net/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/jamesgober/form-net/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/jamesgober/form-net/compare/v0.9.0...v0.9.1

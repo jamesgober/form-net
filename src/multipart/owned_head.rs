@@ -48,12 +48,32 @@ impl fmt::Debug for OwnedPartHead {
 
 impl OwnedPartHead {
     /// An empty head; [`view`](Self::view) of it is a field with no name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::OwnedPartHead;
+    ///
+    /// let head = OwnedPartHead::new();
+    /// assert_eq!(head.view().name(), "");
+    /// assert!(!head.view().is_file());
+    /// ```
     #[must_use]
     pub fn new() -> OwnedPartHead {
         OwnedPartHead::default()
     }
 
     /// An empty head whose buffer already holds `capacity` bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::OwnedPartHead;
+    ///
+    /// // Room for a 1 KiB header block before the first copy allocates.
+    /// let head = OwnedPartHead::with_capacity(1024);
+    /// assert_eq!(head.view().header_bytes(), 0);
+    /// ```
     #[must_use]
     pub fn with_capacity(capacity: usize) -> OwnedPartHead {
         let mut head = OwnedPartHead::default();
@@ -74,6 +94,22 @@ impl OwnedPartHead {
     /// two buffers are never held at once. The header block is copied once:
     /// the name, file name, and content type that lie inside it are kept as
     /// positions in that copy (D-140).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Limits, MultipartEvent, MultipartParser, OwnedPartHead, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X--";
+    /// let mut kept = OwnedPartHead::new();
+    /// if let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event {
+    ///     kept.copy_from(&head);
+    /// }
+    /// // The copy outlives the parser that produced the head.
+    /// drop(parser);
+    /// assert_eq!(kept.view().name(), "a");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn copy_from(&mut self, head: &PartHead<'_>) {
         crate::wipe::wipe(&mut self.buf);
         self.buf.clear();
@@ -121,6 +157,22 @@ impl OwnedPartHead {
     }
 
     /// The usual borrowed view.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::{Boundary, Limits, MultipartEvent, MultipartParser, OwnedPartHead, Policy};
+    /// # let mut parser = MultipartParser::new(Boundary::new(b"X")?, &Limits::DEFAULT, &Policy::DEFAULT)?;
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+    /// let mut kept = OwnedPartHead::new();
+    /// if let MultipartEvent::PartStart(head) = parser.parse(body, true)?.event {
+    ///     kept.copy_from(&head);
+    /// }
+    /// let head = kept.view();
+    /// assert!(head.is_file());
+    /// assert_eq!(head.filename().unwrap().raw(), b"a.txt");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn view(&self) -> PartHead<'_> {
         let get = |r: &Range<usize>| self.buf.get(r.clone()).unwrap_or(&[]);

@@ -47,6 +47,18 @@ pub enum ValueError {
 }
 
 /// A file field's value.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{FileData, FileValue, FromField};
+///
+/// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--")?;
+/// let mut slot = <FileData as FromField>::Slot::default();
+/// FileData::accept_file(&mut slot, FileValue::Buffered(mp.file("f").unwrap())).unwrap();
+/// assert_eq!(FileData::finish(slot).unwrap().bytes(), b"hi");
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[non_exhaustive]
 pub enum FileValue<'a> {
     /// A part of a buffered body.
@@ -106,6 +118,17 @@ pub trait FromField: Sized {
     /// # Errors
     ///
     /// `ExpectedFile` by default; the type's own conversion errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FromField, ValueError};
+    ///
+    /// let mut slot = <u16 as FromField>::Slot::default();
+    /// assert_eq!(u16::accept_text(&mut slot, "8080"), Ok(()));
+    /// assert_eq!(u16::accept_text(&mut slot, "80"), Err(ValueError::Duplicate));
+    /// assert_eq!(u16::finish(slot), Ok(8080));
+    /// ```
     fn accept_text(slot: &mut Self::Slot, value: &str) -> Result<(), ValueError> {
         let _ = (slot, value);
         Err(ValueError::ExpectedFile)
@@ -116,6 +139,19 @@ pub trait FromField: Sized {
     /// # Errors
     ///
     /// `ExpectedText` by default; the type's own errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FileValue, FromField, ValueError};
+    ///
+    /// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--")?;
+    /// let mut slot = <String as FromField>::Slot::default();
+    /// let file = FileValue::Buffered(mp.file("f").unwrap());
+    /// // A text field type refuses a file.
+    /// assert_eq!(String::accept_file(&mut slot, file), Err(ValueError::ExpectedText));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn accept_file(slot: &mut Self::Slot, file: FileValue<'_>) -> Result<(), ValueError> {
         let _ = (slot, file);
         Err(ValueError::ExpectedText)
@@ -126,6 +162,18 @@ pub trait FromField: Sized {
     /// # Errors
     ///
     /// `Missing`, or the type's own errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FromField, ValueError};
+    ///
+    /// let mut slot = <Vec<u8> as FromField>::Slot::default();
+    /// <Vec<u8>>::accept_text(&mut slot, "1").unwrap();
+    /// <Vec<u8>>::accept_text(&mut slot, "2").unwrap();
+    /// assert_eq!(<Vec<u8>>::finish(slot), Ok(vec![1, 2]));
+    /// assert_eq!(String::finish(None), Err(ValueError::Missing));
+    /// ```
     fn finish(slot: Self::Slot) -> Result<Self, ValueError>;
 }
 
@@ -171,6 +219,19 @@ pub trait FormBuilder {
     /// # Errors
     ///
     /// `Extract { .. }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormBuilder, FromForm};
+    ///
+    /// form_net::form! { #[derive(Debug)] pub struct Search { pub q: String } }
+    ///
+    /// let mut b = <Search as FromForm>::Builder::default();
+    /// b.text("q", "rust")?;
+    /// assert_eq!(b.text("page", "2").unwrap_err().code(), "extract.unknown");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn text(&mut self, name: &str, value: &str) -> Result<(), FormError>;
 
     /// One file.
@@ -178,6 +239,20 @@ pub trait FormBuilder {
     /// # Errors
     ///
     /// `Extract { .. }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FileValue, FormBuilder, FromForm};
+    ///
+    /// form_net::form! { pub struct Avatar { pub f: form_net::FileData } }
+    ///
+    /// let mp = form_net::parse_multipart(b"multipart/form-data; boundary=X", b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--")?;
+    /// let mut b = <Avatar as FromForm>::Builder::default();
+    /// b.file("f", FileValue::Buffered(mp.file("f").unwrap()))?;
+    /// assert_eq!(b.finish()?.f.bytes(), b"hi");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn file(&mut self, name: &str, file: FileValue<'_>) -> Result<(), FormError>;
 
     /// The struct, once every field has arrived.
@@ -185,12 +260,40 @@ pub trait FormBuilder {
     /// # Errors
     ///
     /// `Extract { Missing | Invalid, .. }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FormBuilder, FormError, FromForm};
+    ///
+    /// form_net::form! { #[derive(Debug)] pub struct Search { pub q: String } }
+    ///
+    /// let b = <Search as FromForm>::Builder::default();
+    /// let err = b.finish().unwrap_err();
+    /// assert!(matches!(err, FormError::Extract { reason: ExtractError::Missing, field: Some("q") }));
+    /// ```
     fn finish(self) -> Result<Self::Output, FormError>;
 
     /// What a file under `name` is to the struct: `Some(true)` a declared
     /// field, `Some(false)` an ignored name, `None` an unknown one.
     /// `FromForm::from_upload_mut` (feature `fs`) moves only declared files out of the
     /// upload. The default says every name is declared.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormBuilder, FromForm};
+    ///
+    /// form_net::form! {
+    ///     pub struct Post { pub cover: form_net::FileData }
+    ///     ignore = ["note"];
+    /// }
+    ///
+    /// let b = <Post as FromForm>::Builder::default();
+    /// assert_eq!(b.file_field("cover"), Some(true));
+    /// assert_eq!(b.file_field("note"), Some(false));
+    /// assert_eq!(b.file_field("other"), None);
+    /// ```
     fn file_field(&self, name: &str) -> Option<bool> {
         let _ = name;
         Some(true)
@@ -199,6 +302,20 @@ pub trait FormBuilder {
     /// As [`finish`](Self::finish), but records every field's error in
     /// `errors` instead of stopping at the first; `None` when any field
     /// failed. The default records the one error `finish` returns.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormBuilder, FromForm};
+    ///
+    /// form_net::form! { #[derive(Debug)] pub struct Signup { pub email: String, pub age: u8 } }
+    ///
+    /// let mut errors = Vec::new();
+    /// let b = <Signup as FromForm>::Builder::default();
+    /// assert!(b.finish_all(&mut errors).is_none());
+    /// // Both missing fields are reported, not only the first.
+    /// assert_eq!(errors.len(), 2);
+    /// ```
     fn finish_all(self, errors: &mut alloc::vec::Vec<FormError>) -> Option<Self::Output>
     where
         Self: Sized,
@@ -243,29 +360,86 @@ pub struct FormErrors(alloc::vec::Vec<FormError>);
 
 impl FormErrors {
     /// Every error, in the order found.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FromForm};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Signup { pub email: String, pub age: u8 } }
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let errors = Signup::from_body_all(ct, b"age=300&role=admin").unwrap_err();
+    /// let codes: Vec<_> = errors.iter().map(|e| e.code()).collect();
+    /// assert_eq!(codes, ["extract.invalid", "extract.unknown", "extract.missing"]);
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = &FormError> {
         self.0.iter()
     }
 
     /// How many errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FromForm};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Signup { pub email: String, pub age: u8 } }
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let errors = Signup::from_body_all(ct, b"age=300&role=admin").unwrap_err();
+    /// assert_eq!(errors.len(), 3);
+    /// ```
     #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
     /// Whether there are none (never true for a returned value).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FromForm};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Signup { pub email: String, pub age: u8 } }
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let errors = Signup::from_body_all(ct, b"age=300&role=admin").unwrap_err();
+    /// assert!(!errors.is_empty());
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
     /// The first error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FromForm};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Signup { pub email: String, pub age: u8 } }
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let errors = Signup::from_body_all(ct, b"age=300&role=admin").unwrap_err();
+    /// assert_eq!(errors.first().map(|e| e.code()), Some("extract.invalid"));
+    /// ```
     #[must_use]
     pub fn first(&self) -> Option<&FormError> {
         self.0.first()
     }
 
     /// The first extraction error for the field with this Rust name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FromForm};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Signup { pub email: String, pub age: u8 } }
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let errors = Signup::from_body_all(ct, b"age=300&role=admin").unwrap_err();
+    /// assert_eq!(errors.field("age"), Some(ExtractError::Invalid("out of range")));
+    /// assert_eq!(errors.field("email"), Some(ExtractError::Missing));
+    /// ```
     #[must_use]
     pub fn field(&self, name: &str) -> Option<ExtractError> {
         self.0.iter().find_map(|e| match e {
@@ -278,6 +452,18 @@ impl FormErrors {
     }
 
     /// How many received names the struct neither declares nor ignores.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FromForm};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Signup { pub email: String, pub age: u8 } }
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let errors = Signup::from_body_all(ct, b"age=300&role=admin").unwrap_err();
+    /// // `role` is neither a field nor an ignored name.
+    /// assert_eq!(errors.unknown(), 1);
+    /// ```
     #[must_use]
     pub fn unknown(&self) -> usize {
         self.0
@@ -295,6 +481,17 @@ impl FormErrors {
     }
 
     /// The status hint of the first error (422 for extraction errors).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FromForm};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Signup { pub email: String, pub age: u8 } }
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let errors = Signup::from_body_all(ct, b"age=300&role=admin").unwrap_err();
+    /// assert_eq!(errors.status_hint(), 422);
+    /// ```
     #[must_use]
     pub fn status_hint(&self) -> u16 {
         self.first().map_or(422, FormError::status_hint)
@@ -479,6 +676,17 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// The parser's errors; `Extract { .. }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::FromForm;
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Search { pub q: String, pub page: u32 } }
+    /// let s = Search::from_urlencoded(b"q=rust+forms&page=2")?;
+    /// assert_eq!((s.q.as_str(), s.page), ("rust forms", 2));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn from_urlencoded(input: &[u8]) -> Result<Self, FormError> {
         Self::from_urlencoded_with(input, &Limits::DEFAULT, &Policy::DEFAULT)
     }
@@ -488,6 +696,17 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// As [`from_urlencoded`](Self::from_urlencoded).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::FromForm;
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Search { pub q: String, pub page: u32 } }
+    /// let s = Search::from_query(b"?q=rust&page=1")?;
+    /// assert_eq!((s.q.as_str(), s.page), ("rust", 1));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn from_query(query: &[u8]) -> Result<Self, FormError> {
         Self::from_urlencoded(query.strip_prefix(b"?").unwrap_or(query))
     }
@@ -497,6 +716,18 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// The parser's errors; `Extract { .. }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::FromForm;
+    ///
+    /// # form_net::form! { pub struct Note { pub title: String } }
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHi\r\n--X--";
+    /// let note = Note::from_multipart(b"multipart/form-data; boundary=X", body)?;
+    /// assert_eq!(note.title, "Hi");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn from_multipart(content_type: &[u8], body: &[u8]) -> Result<Self, FormError> {
         let mp = crate::parse_multipart(content_type, body)?;
         let mut b = Self::Builder::default();
@@ -509,6 +740,19 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// `UnsupportedMediaType`; the parsers' errors; `Extract { .. }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::FromForm;
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Search { pub q: String, pub page: u32 } }
+    /// let s = Search::from_body(b"application/x-www-form-urlencoded", b"q=a&page=3")?;
+    /// assert_eq!(s.page, 3);
+    /// let err = Search::from_body(b"application/json", b"{}").unwrap_err();
+    /// assert_eq!(err.code(), "unsupported_media_type");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn from_body(content_type: &[u8], body: &[u8]) -> Result<Self, FormError> {
         Self::from_body_with(content_type, body, &Limits::DEFAULT, &Policy::DEFAULT)
     }
@@ -518,6 +762,17 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// As [`from_urlencoded`](Self::from_urlencoded); `InvalidLimits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FromForm, Limits, Policy};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Search { pub q: String, pub page: u32 } }
+    /// let limits = Limits::DEFAULT.with_max_body_bytes(16);
+    /// let r = Search::from_urlencoded_with(b"q=a-long-search-term&page=1", &limits, &Policy::DEFAULT);
+    /// assert_eq!(r.unwrap_err().code(), "limit.body");
+    /// ```
     fn from_urlencoded_with(
         input: &[u8],
         limits: &Limits,
@@ -534,6 +789,18 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// As [`from_body`](Self::from_body); `InvalidLimits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FromForm, Limits, Policy};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Search { pub q: String, pub page: u32 } }
+    /// let limits = Limits::DEFAULT.with_max_fields(1);
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let err = Search::from_body_with(ct, b"q=a&page=1", &limits, &Policy::DEFAULT).unwrap_err();
+    /// assert_eq!(err.code(), "limit.fields");
+    /// ```
     fn from_body_with(
         content_type: &[u8],
         body: &[u8],
@@ -549,6 +816,24 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// As [`from_body_with`](Self::from_body_with); `Refused`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FromForm, Inspector, Limits, Policy, Refusal, Verdict};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Search { pub q: String, pub page: u32 } }
+    /// struct NoAdmin;
+    /// impl Inspector for NoAdmin {
+    ///     fn field(&mut self, name: &str, _value: &[u8]) -> Verdict {
+    ///         if name == "admin" { Verdict::Refuse(Refusal::new(403, "app.admin")) } else { Verdict::Continue }
+    ///     }
+    /// }
+    ///
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let r = Search::from_body_inspected(ct, b"admin=1&q=a", &Limits::DEFAULT, &Policy::DEFAULT, &mut NoAdmin);
+    /// assert_eq!(r.unwrap_err().code(), "app.admin");
+    /// ```
     fn from_body_inspected<I: Inspector>(
         content_type: &[u8],
         body: &[u8],
@@ -589,6 +874,17 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// [`FormErrors`]: the parse error alone, or every extraction error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{ExtractError, FromForm};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Search { pub q: String, pub page: u32 } }
+    /// let errors = Search::from_body_all(b"application/x-www-form-urlencoded", b"page=x").unwrap_err();
+    /// assert_eq!(errors.field("page"), Some(ExtractError::Invalid("not a whole number")));
+    /// assert_eq!(errors.field("q"), Some(ExtractError::Missing));
+    /// ```
     fn from_body_all(content_type: &[u8], body: &[u8]) -> Result<Self, FormErrors> {
         Self::from_body_all_with(content_type, body, &Limits::DEFAULT, &Policy::DEFAULT)
     }
@@ -599,6 +895,19 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// As [`from_body_all`](Self::from_body_all); `InvalidLimits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FromForm, Limits, Policy};
+    ///
+    /// # form_net::form! { #[derive(Debug)] pub struct Search { pub q: String, pub page: u32 } }
+    /// let limits = Limits::DEFAULT.with_max_body_bytes(8);
+    /// let ct = b"application/x-www-form-urlencoded";
+    /// let errors = Search::from_body_all_with(ct, b"q=a&page=10", &limits, &Policy::DEFAULT).unwrap_err();
+    /// // A parse error stops the parse and is the only error.
+    /// assert_eq!((errors.len(), errors.status_hint()), (1, 413));
+    /// ```
     fn from_body_all_with(
         content_type: &[u8],
         body: &[u8],
@@ -686,6 +995,20 @@ pub trait FromForm: Sized {
     /// # Errors
     ///
     /// `Extract { .. }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::FromForm;
+    ///
+    /// form_net::form! { pub struct Post { pub title: String, pub cover: form_net::StoredFile } }
+    ///
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHi\r\n--X\r\nContent-Disposition: form-data; name=cover; filename=c.png\r\n\r\nC\r\n--X--";
+    /// let upload = form_net::read_multipart(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let post = Post::from_upload(upload)?;
+    /// assert_eq!((post.title.as_str(), post.cover.len()), ("Hi", 1));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[cfg(feature = "fs")]
     #[cfg_attr(docsrs, doc(cfg(feature = "fs")))]
     fn from_upload(upload: crate::store::Upload) -> Result<Self, FormError> {

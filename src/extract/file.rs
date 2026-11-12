@@ -58,36 +58,112 @@ impl FileData {
     }
 
     /// The file's bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::FromForm;
+    /// # form_net::form! { pub struct Avatar { pub image: form_net::FileData } }
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=image; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\nPNG\r\n--X--";
+    /// let file = Avatar::from_multipart(ct, body)?.image;
+    /// assert_eq!(file.bytes(), b"PNG");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
 
     /// The file's bytes, owned. They are no longer wiped by form-net.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::FromForm;
+    /// # form_net::form! { pub struct Avatar { pub image: form_net::FileData } }
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=image; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\nPNG\r\n--X--";
+    /// let file = Avatar::from_multipart(ct, body)?.image;
+    /// let bytes: Vec<u8> = file.into_bytes();
+    /// assert_eq!(bytes, b"PNG");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn into_bytes(mut self) -> Vec<u8> {
         core::mem::take(&mut self.bytes)
     }
 
     /// The length in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::FromForm;
+    /// # form_net::form! { pub struct Avatar { pub image: form_net::FileData } }
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=image; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\nPNG\r\n--X--";
+    /// let file = Avatar::from_multipart(ct, body)?.image;
+    /// assert_eq!(file.len(), 3);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn len(&self) -> usize {
         self.bytes.len()
     }
 
     /// Whether the file is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::FromForm;
+    /// # form_net::form! { pub struct Avatar { pub image: form_net::FileData } }
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=image; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\nPNG\r\n--X--";
+    /// let file = Avatar::from_multipart(ct, body)?.image;
+    /// assert!(!file.is_empty());
+    /// assert!(form_net::FileData::default().is_empty());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
     /// The client's file name, as sent: never sanitized, never a path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::FromForm;
+    /// # form_net::form! { pub struct Avatar { pub image: form_net::FileData } }
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=image; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\nPNG\r\n--X--";
+    /// let file = Avatar::from_multipart(ct, body)?.image;
+    /// // As sent: sanitize it before using it as a path.
+    /// assert_eq!(file.filename(), Some("me.png"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn filename(&self) -> Option<&str> {
         self.filename.as_deref()
     }
 
     /// The declared content type: a hint, never trusted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use form_net::FromForm;
+    /// # form_net::form! { pub struct Avatar { pub image: form_net::FileData } }
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let body = b"--X\r\nContent-Disposition: form-data; name=image; filename=\"me.png\"\r\nContent-Type: image/png\r\n\r\nPNG\r\n--X--";
+    /// let file = Avatar::from_multipart(ct, body)?.image;
+    /// // The client's claim; check the bytes before trusting it.
+    /// assert_eq!(file.content_type(), Some("image/png"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn content_type(&self) -> Option<&str> {
         self.content_type.as_deref()

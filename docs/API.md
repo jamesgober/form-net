@@ -257,7 +257,7 @@ Reads a request's `Content-Type` value and says which form encoding it is. It is
 **Behaviour**
 
 - The value is parsed with parse-net's media-type grammar (RFC 9110 section 8.3.1). Type and subtype compare ASCII case-insensitively; repeated parameters are refused, and so are an empty parameter (`;;`, which RFC 9110 allows and Go's reader refuses) and an extended parameter such as `boundary*` (which Go's reader prefers to `boundary`), D-136.
-- `application/x-www-form-urlencoded` gives `Urlencoded`. Its parameters are ignored, except a `charset` that is not `utf-8` or `us-ascii` (ASCII case-insensitive, quoted or not), which is refused.
+- `application/x-www-form-urlencoded` gives `Urlencoded`. Its parameters are ignored, except a `charset` that is not `utf-8` (ASCII case-insensitive, quoted or not), which is refused: the body is read as UTF-8, and WHATWG readers decode a `us-ascii` label as windows-1252 (D-150).
 - `multipart/form-data` gives `Multipart` with the validated boundary: exactly one `boundary` parameter, token or quoted, 1 to 70 bytes of RFC 2046 `bchars`, not ending in a space, and not starting or ending with `'` (readers that take single quotes as quoting strip them, D-136).
 - Anything else, including `text/plain`, `multipart/mixed`, and `application/json`, is `UnsupportedMediaType`. `text/plain` form bodies are not machine-readable by the HTML standard's own account and are never parsed.
 
@@ -270,7 +270,7 @@ Reads a request's `Content-Type` value and says which form encoding it is. It is
 | `Syntax { MissingBoundary }` | `multipart/form-data` without `boundary` |
 | `Syntax { DuplicateBoundary }` | two `boundary` parameters, whatever their values (form-net reads the parameters itself, so this is never reported as a generic repeated parameter) |
 | `Syntax { InvalidBoundary }` | empty, longer than 70 bytes, a byte outside `bchars`, a trailing space, a leading or trailing `'`, or an extended `boundary*` parameter |
-| `Encoding { UnsupportedCharset }` | a urlencoded `charset` other than UTF-8 or US-ASCII |
+| `Encoding { UnsupportedCharset }` | a urlencoded `charset` other than UTF-8 |
 
 **Cost:** 114 ns for a browser value (`multipart/form-data; boundary=----WebKitFormBoundary` plus 16 characters), no allocation; the time is parse-net's strict media-type grammar (measured; `docs/PERFORMANCE.md`).
 
@@ -744,7 +744,7 @@ pub fn parse_multipart<'a>(content_type: &[u8], body: &'a [u8]) -> Result<Multip
 
 Detects the boundary, parses the whole body with `Limits::DEFAULT` and `Policy::DEFAULT`, and returns the parts. Part data borrows the body (zero copy); a part's bytes are the exact slice between its blank line and the CRLF before the next delimiter. Names borrow too, except where an HTML escape (`%22`, `%0D`, `%0A`) had to be decoded, which costs one small owned copy for that name.
 
-Text fields are checked as text at parse time (a US-ASCII label is read as UTF-8, of which it is a subset): a text field that is not valid UTF-8, or whose charset (its own, else the `_charset_` field before it, else UTF-8) is not UTF-8 or US-ASCII, refuses the body. A field is checked when its whole value is read: before `Inspector::field`, and not when an inspector skipped it at `part_start` or `data` (its bytes are discarded unread); a `_charset_` field declares the charset of what follows whether or not it was skipped. `UploadSession` checks by the same rule (D-128). That is why `Multipart::field` can return a plain `Option<&str>` without hiding an error. Callers who must accept other charsets use the Tier 3 parser, which hands out bytes.
+Text fields are checked as text at parse time: a text field that is not valid UTF-8, or whose charset (its own, else the `_charset_` field before it, else UTF-8) is not UTF-8 or US-ASCII, refuses the body, and so does a byte at or above 0x80 under a US-ASCII label, which WHATWG readers would decode as windows-1252 (D-150). A field is checked when its whole value is read: before `Inspector::field`, and not when an inspector skipped it at `part_start` or `data` (its bytes are discarded unread); a `_charset_` field declares the charset of what follows whether or not it was skipped. `UploadSession` checks by the same rule (D-128). That is why `Multipart::field` can return a plain `Option<&str>` without hiding an error. Callers who must accept other charsets use the Tier 3 parser, which hands out bytes.
 
 **Errors:** every multipart error in [Every error](#every-error-and-what-to-do); `UnsupportedMediaType` when the content type is not `multipart/form-data`.
 
@@ -884,7 +884,7 @@ As `parse_multipart_with`, with an inspector called in the order described under
 
 ## multipart, streaming
 
-The sans-IO core. Bytes go in as they arrive, in chunks of any size split at any byte, and events come out. The parser never allocates after construction, never rescans a byte, and gives identical events for every split of the same body (FR-42).
+The sans-IO core. Bytes go in as they arrive, in chunks of any size split at any byte, and events come out. The parser never allocates after construction, and gives identical events for every split of a body that parses (FR-42); for a body that fails, the error is the same for every split, though a split body may emit data before it that a whole one does not (D-145). The search is linear: bytes that may start a delimiter at a chunk's end are carried and scanned again with the next chunk, at most 73 per boundary.
 
 The framing rules (RFC 2046 section 5.1.1 and RFC 7578), with form-net's strict choices:
 
@@ -898,7 +898,7 @@ The framing rules (RFC 2046 section 5.1.1 and RFC 7578), with form-net's strict 
 | after the close delimiter | at most `max_epilogue_bytes` more, counted in constant time per chunk and discarded |
 | end of input before the close delimiter | `Truncated` |
 | part headers | `name ":" OWS value OWS CRLF`; no whitespace before the colon, no folding, no control bytes except HTAB; bytes 0x80 to 0xFF allowed in values (browsers send raw UTF-8 file names) |
-| `Content-Disposition` | exactly once; type `form-data`; `name` exactly once and not empty; `filename` at most once; no repeated parameter; unknown parameters ignored, except that a parameter name with `*` other than `filename*` (RFC 2231 continuations, `name*`) a backslash in `name`, an unquoted `name` or `filename` that starts or ends with `'` (some readers strip single quotes, D-114), and `name`, `filename`, or `filename*` written other than in lower case (some readers match them exactly, D-116) are refused as `MalformedParameter`; at most 16 parameters (more is `MalformedParameter`); an empty parameter (`;;`), and any parameter value that holds `name=` in any case (readers that find parameters by substring search, multer 3.1 among them, read another name there), are `MalformedParameter` (D-136); a quoted value containing `\"` refused (browsers never backslash-escape, so the RFC 9110 and HTML readings disagree only there) |
+| `Content-Disposition` | exactly once; type `form-data`; `name` exactly once and not empty; `filename` at most once; no repeated parameter; unknown parameters ignored, except that a parameter name with `*` other than `filename*` (RFC 2231 continuations, `name*`) a backslash in `name`, an unquoted `name` or `filename` that starts or ends with `'` (some readers strip single quotes, D-114), and `name`, `filename`, or `filename*` written other than in lower case (some readers match them exactly, D-116) are refused as `MalformedParameter`; at most 16 parameters (more is `MalformedParameter`); an empty parameter (`;;`), and a parameter value holding `name=` or `filename=` (any case) at its start or after `;`, `,`, or whitespace, where a reader that splits the header there (multer 3.1 among them) reads another parameter, are `MalformedParameter` (D-136, D-152; `Surname=Smith.pdf` is accepted); a quoted value containing `\"` refused (browsers never backslash-escape, so the RFC 9110 and HTML readings disagree only there) |
 | `filename*` | refused by default; see [`ExtendedFilenamePolicy`](#extendedfilenamepolicy) |
 | part `Content-Type` | at most once; parsed; `multipart/*` refused (no nested multipart) |
 | `Content-Transfer-Encoding` | absent, `7bit`, `8bit`, or `binary` (any case); anything else refused |
@@ -1101,7 +1101,7 @@ pub enum PartKind { Field, File }
 pub enum Charset { Utf8, Ascii, Unspecified, Other }
 ```
 
-`Charset::Unspecified` means no `charset` parameter: UTF-8 is assumed unless a `_charset_` field before the part said otherwise. `Other` is any label that is not UTF-8 or US-ASCII; its text is refused by every `text` accessor and stays available as bytes.
+`Charset::Unspecified` means no `charset` parameter: UTF-8 is assumed unless a `_charset_` field before the part said otherwise. `Ascii` text must be ASCII: a byte at or above 0x80 is refused (D-150). `Other` is any label that is not UTF-8 or US-ASCII; its text is refused by every `text` accessor and stays available as bytes.
 
 ### `ContentType`
 
@@ -1199,8 +1199,8 @@ The client's file name, with views for each way a caller might want it. **form-n
 | `source` | `Plain` for `filename`, `Extended` for `filename*` |
 | `basename` | the bytes after the last `/` or `\` (some non-browser clients send full client paths) |
 | `html_unescape_into`, `html_unescaped` | `%0A`, `%0D`, `%22` decoded to LF, CR, `"`; nothing else. Browsers do not escape `%` itself, so a file the user named `a%22b` reads as `a"b`; that ambiguity is inherent in the HTML encoding |
-| `extension` | the text after the last `.` of the base name when it is 1 to 16 ASCII alphanumeric bytes; a hint that proves nothing about the content |
-| `sanitized` | `html_unescaped` of `basename`, then NFC (with `unicode`), then every Unicode default-ignorable character (zero-width spaces and joiners, soft hyphens, variation selectors, tags, bidirectional controls) replaced by `_` (D-084), then `path_lib::sanitize`: one portable file name that `path_lib::join` accepts as a single segment, with separators, control and invisible characters, Windows-reserved characters and device names, bidirectional overrides, and trailing dots and spaces made harmless. It is still a name the client chose: never let it overwrite anything (`StoredFile::persist` refuses to) |
+| `extension` | the text after the last `.` of the base name when it is 1 to 16 ASCII alphanumeric bytes and the dot is not the name's first byte (`.htaccess` has none, D-157); `sanitized` always keeps it; a hint that proves nothing about the content |
+| `sanitized` | `html_unescaped` of `basename`, then NFC (with `unicode`), then every Unicode default-ignorable character (zero-width spaces and joiners, soft hyphens, variation selectors, tags, bidirectional controls) replaced by `_` (D-084), then `path_lib::sanitize`: one portable file name that `path_lib::join` accepts as a single segment, with separators, control and invisible characters, Windows-reserved characters and device names, bidirectional overrides, and trailing dots and spaces made harmless. At most 255 bytes: a longer name loses bytes from the end of its stem, never its extension, so when `extension` is `Some(e)` the result ends with `.e` (D-156). A leading `.` becomes `_`, so a dot file such as `.htaccess` is never kept (D-157). It is still a name the client chose: never let it overwrite anything (`StoredFile::persist` refuses to) |
 | `nfc` | Unicode NFC of `as_str` (macOS clients may send NFD) |
 
 **Errors:** `Encoding { InvalidUtf8 }`; `BufferTooSmall { needed }` from `html_unescape_into`.
@@ -1898,7 +1898,7 @@ impl StoredFile {
     pub fn reader(&self) -> Result<StoredReader<'_>, FormError>;
     pub fn read_to_vec(&self, max: u64) -> Result<Vec<u8>, FormError>;
     pub fn path(&self) -> Option<&std::path::Path>;
-    pub fn persist(self, dest: &std::path::Path) -> Result<(), FormError>;
+    pub fn persist(self, dest: &std::path::Path) -> Result<(), PersistError>;
 }
 
 impl Drop for StoredFile { /* close, then delete (named); wipe (memory) */ }
@@ -1918,9 +1918,10 @@ One received file, in memory or in a temporary file.
 - `read_to_vec(max)` refuses a file longer than `max` before allocating (`Limit { FileSize }`).
 - `path` is `Some` only in `SpillMode::Named`.
 - `persist` moves the finished upload to `dest`, which the caller built (with `path_lib::join` for a user-facing name, or from its own id). It never overwrites (FR-51): named mode makes a hard link (which fails if `dest` exists) and then removes the temporary name, and copies into `dest` opened with `create_new` when the link fails for any reason but an existing `dest` (another file system, a file system without links); anonymous and memory files are copied the same way. A copy that fails part way removes the partial `dest` (D-086). Persisted bytes are released from the store's budget. Whether to fsync `dest` and its directory is the caller's choice; `docs/PLATFORM-NOTES.md` explains when it matters.
+- On failure `persist` returns a `PersistError` holding the error and the upload, untouched: `into_file` gives it back to try another name, and `?` into a `FormError` drops it, which deletes it (D-154). On Unix the persisted file is owner-only (`0600`) however it was made, link or copy; widen it after `persist` when others must read it. On Windows it takes the destination directory's inherited ACL (D-155).
 - Dropping a `StoredFile` without `persist` closes its handle first and then removes its name (named mode). Closing first matters on Windows, where an open file cannot be removed, and avoids the bug class of a removed name with a descriptor still open. Memory-held bytes are wiped.
 
-**Errors:** `Io { kind }`; `Store { DestinationExists }` from `persist`; `Limit { FileSize }` from `read_to_vec`.
+**Errors:** `Io { kind }`; `PersistError` (with `Store { DestinationExists }` or `Io { kind }`) from `persist`; `Limit { FileSize }` from `read_to_vec`.
 
 **Cost:** `persist` in named mode on one file system: one link and one unlink; a whole upload, persist, and delete takes 32 µs on Linux and 787 µs on Windows, where file creation is slow; otherwise a copy at disk speed (measured; `docs/PERFORMANCE.md`).
 
@@ -2077,7 +2078,7 @@ Tier 2 · `fs`
 pub fn sweep(dir: &std::path::Path, older_than: core::time::Duration) -> Result<usize, FormError>;
 ```
 
-Removes files named `upload-*.part`, and nothing else, directly inside `dir`, whose modification time is older than `older_than`. It never recurses and never follows links (a link with a matching name is removed as a link, never its target). Returns how many it removed. For `SpillMode::Named` stores after a crash: run it at startup, before the server accepts connections. It is the only function in form-net that reads a clock.
+Removes files named `upload-<32 hex>.part`, and nothing else, whose modification time is older than `older_than`: directly inside `dir`, and directly inside each private directory `Store::temp` makes there (`form-net-<32 hex>`), so `sweep(&std::env::temp_dir(), ..)` reaches what a crashed process left under `Store::temp` or `read_multipart` (D-158). It goes one level down and no further, never follows links (a link with a matching name is removed as a link, never its target, and a link to a directory is not entered), and leaves the private directories in place, since a live store may own one. Returns how many it removed. For `SpillMode::Named` stores after a crash: run it at startup, before the server accepts connections, with `older_than` longer than any live process keeps a named upload. It is the only function in form-net that reads a clock.
 
 **Errors:** `Store { NotADirectory }`, `Io { kind }`.
 
@@ -2494,7 +2495,7 @@ Writes a `multipart/form-data` body as browsers do (FR-64 to FR-66).
 - With a caller boundary, every data chunk goes through the same streaming matcher the parser uses, across chunk splits, and data that contains the delimiter is refused (`Syntax { BoundaryInContent }`). With a generated boundary the scan is skipped (128 random bits make a collision negligible) unless `verify_boundary(true)` is set.
 - `file_data` outside a file part, or any call after an error, is `Poisoned`. A refusal of a head writes nothing of that part; a `BoundaryInContent` or `Io` error can come after part of the data was written, so after any error the output is incomplete and must be discarded.
 
-**Errors:** `Syntax { BoundaryInContent | ControlInHeader | EmptyName | AmbiguousQuote | InvalidContentType | MalformedParameter }` (the last for a name or file name that holds `name=`, which the parser refuses, D-136); `Encoding { UnsupportedCharset }`; `Io { kind }` from the writer; `Random` from `new`; `Poisoned`.
+**Errors:** `Syntax { BoundaryInContent | ControlInHeader | EmptyName | AmbiguousQuote | InvalidContentType | MalformedParameter }` (the last for a name or file name holding `name=` or `filename=` where the parser refuses it, D-136, D-152); `Encoding { UnsupportedCharset }`; `Io { kind }` from the writer; `Random` from `new`; `Poisoned`.
 
 **Cost:** writes go straight to `out`; head encoding 72 to 85 ns per file part; the boundary scan under 0.1 ns per byte when on (measured; `docs/PERFORMANCE.md`).
 
@@ -2699,7 +2700,7 @@ pub enum StoreError { QuotaExceeded, NotADirectory, DestinationExists }
 | `Syntax { Truncated }` | the body ended before the close delimiter | 400; the client disconnected or the body was cut |
 | `Encoding { InvalidPercent }` | a malformed `%` under `PercentPolicy::Refuse` | 400 |
 | `Encoding { InvalidUtf8 }` | decoded text, a name, or a requested text view is not UTF-8 | 400 |
-| `Encoding { UnsupportedCharset }` | a charset other than UTF-8 or US-ASCII for text, or a `_charset_` value over 32 bytes | 415 |
+| `Encoding { UnsupportedCharset }` | a charset other than UTF-8 or US-ASCII for text, a byte at or above 0x80 under US-ASCII, or a `_charset_` value over 32 bytes | 415 |
 | `Encoding { InvalidExtendedValue }` | a malformed `filename*` under `AcceptAlone` | 400 |
 | `Policy { TransferEncoding }` | a `Content-Transfer-Encoding` other than identity | 415 |
 | `Policy { NestedMultipart }` | a part declared `multipart/*` | 415 |
@@ -2717,11 +2718,12 @@ pub enum StoreError { QuotaExceeded, NotADirectory, DestinationExists }
 | `UnsupportedMediaType` | not urlencoded or `multipart/form-data` | 415 |
 | `InvalidLimits { limit }` | `Limits::validate` found an inconsistent pair | fix the configuration (500) |
 | `BufferTooSmall { needed }` | a caller buffer shorter than `needed` | size it with `Limits::multipart_buffer_len`, `Limits::urlencoded_buffer_len`, or the raw length (500) |
-| `Io { kind }` | the reader, the writer, or the file system failed | 500; check the disk and permissions |
+| `Io { kind }` | the writer or the file system failed | 500; check the disk and permissions |
+| `BodyRead { kind }` | reading the request body failed: the client disconnected or the connection broke | 400; nothing to fix on the server (D-159) |
 | `Random` | the OS random source failed | 500; never fall back to predictable names |
 | `Store { QuotaExceeded }` | the shared spill budget is full | 503 with `Retry-After` |
 | `Store { NotADirectory }` | `Store::in_dir` or `sweep` given a non-directory or a link | fix the configuration (500) |
-| `Store { DestinationExists }` | `persist` target exists | choose another name (500) |
+| `Store { DestinationExists }` | `persist` target exists | choose another name: `PersistError::into_file` gives the upload back (500) |
 | `Poisoned` | a call after an error without `reset` | fix the caller (500) |
 
 ### `status_hint`

@@ -25,8 +25,8 @@ Every threat has an attack test named after it. Costs are per request unless sta
 | T-7 | disk filling | `max_file_bytes`, `max_files`, `max_disk_bytes`, `SpillBudget`, reserved before writes | `test_attack_t7_parallel_uploads_never_exceed_the_shared_budget` (`tests/budget.rs`) | one CAS per write, 5 to 20 ns |
 | T-8 | aborted uploads leave files or handles (Node multer CVE-2026-5038, CVE-2026-77037) | abort closes then deletes every file; anonymous files have no name; `Truncated` at eof | `test_attack_t8_abort_at_every_byte_leaves_nothing` (`tests/abort.rs`) | none on success |
 | T-9 | temporary file races: predictable names, planted files, symlinks | fresh private directory with 128 random bits, 0700; random file names; `create_new`; 0600 | `test_attack_t9_planted_file_is_never_opened` (`src/store/temp.rs`)<br>`test_attack_t9_planted_link_is_never_followed` (`src/store/temp.rs`) | one random read per file |
-| T-10 | disclosure to other local users | 0600 in 0700 (Unix); per-user temp ACL (Windows) | `test_attack_t10_permissions_are_owner_only` (`tests/store.rs`)<br>`test_attack_t10_temp_directory_is_under_the_user_profile` (`tests/store.rs`) | none |
-| T-11 | a crash leaves uploads on disk | anonymous mode; named mode plus `sweep` | `test_attack_t11_named_files_survive_a_crash_until_sweep` (`tests/crash.rs`) | none |
+| T-10 | disclosure to other local users | 0600 in 0700 (Unix), and persisted files 0600 however `persist` made them (D-155); per-user temp ACL (Windows) | `test_attack_t10_permissions_are_owner_only` (`tests/store.rs`)<br>`test_attack_t10_temp_directory_is_under_the_user_profile` (`tests/store.rs`) | none |
+| T-11 | a crash leaves uploads on disk | anonymous mode; named mode plus `sweep`, which also reaches the private directories `Store::temp` makes (D-158) | `test_attack_t11_named_files_survive_a_crash_until_sweep` (`tests/crash.rs`) | none |
 | T-12 | delimiter prefix inside data | a full delimiter followed by anything but `--`, padding, or CRLF is refused | `test_attack_t12_delimiter_prefix_inside_data_refused` (`tests/attacks.rs`) | none |
 | T-13 | two boundaries, or token and quoted forms that read differently | exactly one `boundary`; parse-net grammar | `test_attack_t13_two_boundaries_refused` (`tests/attacks.rs`) | none |
 | T-14 | differential with a WAF or proxy in front (WAFFLED) | refuse every construct readers disagree on: duplicate disposition, duplicate `name`, both file names, transfer encodings, bare LF, folding, whitespace before colon, `\"`, missing close delimiter, data past the epilogue budget | `test_attack_t14_waf_differential_shapes_refused` (`tests/attacks.rs`)<br>`test_attack_t14_waffled_mutations_are_refused_or_read_the_same` (`tests/waffled.rs`) | none on clean bodies |
@@ -85,7 +85,7 @@ Out of scope, named so nobody assumes otherwise: decompression bombs (the HTTP l
 | `name*`, `filename*0` and other starred parameters | joined or preferred by RFC 2231 readers | refused (`MalformedParameter`) | D-081 |
 | `boundary*` beside `boundary` in the request `Content-Type`, or any starred request parameter | Go's `mime.ParseMediaType` frames the body with the starred value | refused (`InvalidBoundary`, `InvalidContentType`) | D-136 |
 | an empty parameter (`;;`) in the request `Content-Type` or a part header | allowed by RFC 9110; Go refuses the whole list, so it sees no boundary, or a part with no name, which `net/http` skips | refused (`InvalidContentType`, `MalformedParameter`) | D-136 |
-| a parameter value that holds `name=` (`x="y;name=evil;"`, `filename="a; name=role;"`) | the value (RFC 6266), or the parameter itself (readers that search for `name=`, multer 3.1 among them) | refused (`MalformedParameter`) | D-136 |
+| a parameter value holding `name=` or `filename=` at its start or after `;`, `,`, or whitespace (`x="y;name=evil;"`, `filename="a name=x.txt"`) | the value (RFC 6266), or a new parameter (readers that split the header there, multer 3.1 among them, checked by running it) | refused (`MalformedParameter`); after a letter it is accepted, so `Surname=Smith.pdf` uploads | D-136, D-152 |
 | a boundary starting or ending with `'` | the token itself, or the quoted text | refused (`InvalidBoundary`) | D-136 |
 | `filename` and `filename*` together | either one wins, by reader | refused (`BothFilenames`); `filename*` alone only by policy | D-014, FR-27 |
 | `filename*` alone | a file to RFC 2231 readers | refused (`ExtendedFilename`) unless `AcceptAlone` reads it as a file; the `Ignore` policy that read it as a field is gone | D-147, D-148 |
@@ -94,9 +94,10 @@ Out of scope, named so nobody assumes otherwise: decompression bombs (the HTTP l
 | `Content-Transfer-Encoding` other than identity | ignored by most | refused | T-26 |
 | a `multipart/*` part | passed on as bytes | refused (`NestedMultipart`) | T-27 |
 | a charset other than UTF-8 (`_charset_`, part `charset`) | decoded or replaced | refused | T-25 |
+| a byte at or above 0x80 under a `us-ascii` label; a urlencoded `charset=us-ascii` | windows-1252 to WHATWG readers, UTF-8 to others | refused (`UnsupportedCharset`) | D-150 |
 | data past the close delimiter | ignored | at most `max_epilogue_bytes`, then refused | T-3 |
 
-Browsers send none of these. The capture corpus below proves that every body current Chrome, Edge, Firefox, and Safari send is accepted; the shapes they can send that form-net refuses by design are tested as refusals.
+Browsers send none of these, apart from the file names the `name=` row accepts after a letter. The capture corpus below proves that every body current Chrome, Edge, Firefox, and Safari send is accepted; the shapes they can send that form-net refuses by design are tested as refusals.
 
 ---
 

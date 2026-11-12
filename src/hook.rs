@@ -35,6 +35,16 @@ pub struct Refusal {
 
 impl Refusal {
     /// A refusal with this status and code.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Refusal, Verdict};
+    ///
+    /// const BLOCKED: Refusal = Refusal::new(403, "app.blocked");
+    /// let verdict = Verdict::Refuse(BLOCKED);
+    /// assert_eq!(verdict, Verdict::Refuse(Refusal::new(403, "app.blocked")));
+    /// ```
     #[must_use]
     pub const fn new(status: u16, code: &'static str) -> Refusal {
         Refusal { status, code }
@@ -108,6 +118,25 @@ pub enum Verdict {
 pub trait Inspector {
     /// A part's headers were read and passed every rule. Called before any
     /// byte of the part reaches a sink.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Inspector, PartHead, Refusal, Verdict};
+    ///
+    /// struct NoFiles;
+    /// impl Inspector for NoFiles {
+    ///     fn part_start(&mut self, head: &PartHead<'_>) -> Verdict {
+    ///         if head.is_file() { Verdict::Refuse(Refusal::new(415, "app.no_files")) } else { Verdict::Continue }
+    ///     }
+    /// }
+    ///
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let (limits, policy) = (form_net::Limits::DEFAULT, form_net::Policy::DEFAULT);
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.exe\r\n\r\nMZ..\r\n--X--";
+    /// let r = form_net::parse_multipart_inspected(ct, body, &limits, &policy, &mut NoFiles);
+    /// assert_eq!(r.unwrap_err().code(), "app.no_files");
+    /// ```
     fn part_start(&mut self, head: &PartHead<'_>) -> Verdict {
         let _ = head;
         Verdict::Continue
@@ -116,12 +145,53 @@ pub trait Inspector {
     /// The first `min(sniff_bytes, part length)` bytes of a file part, as one
     /// contiguous slice however the input was split, before any `data` call
     /// for that part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Inspector, PartHead, Refusal, Verdict};
+    ///
+    /// struct NoPrograms;
+    /// impl Inspector for NoPrograms {
+    ///     fn sniff(&mut self, _head: &PartHead<'_>, first: &[u8]) -> Verdict {
+    ///         if first.starts_with(b"MZ") { Verdict::Refuse(Refusal::new(415, "app.program")) } else { Verdict::Continue }
+    ///     }
+    /// }
+    ///
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let (limits, policy) = (form_net::Limits::DEFAULT, form_net::Policy::DEFAULT);
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.exe\r\n\r\nMZ..\r\n--X--";
+    /// let r = form_net::parse_multipart_inspected(ct, body, &limits, &policy, &mut NoPrograms);
+    /// assert_eq!(r.unwrap_err().status_hint(), 415);
+    /// ```
     fn sniff(&mut self, head: &PartHead<'_>, first: &[u8]) -> Verdict {
         let _ = (head, first);
         Verdict::Continue
     }
 
     /// Bytes of part `part`'s data, text fields included.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Inspector, Verdict};
+    ///
+    /// struct Bytes(usize);
+    /// impl Inspector for Bytes {
+    ///     fn data(&mut self, _part: u32, chunk: &[u8]) -> Verdict {
+    ///         self.0 += chunk.len();
+    ///         Verdict::Continue
+    ///     }
+    /// }
+    ///
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let (limits, policy) = (form_net::Limits::DEFAULT, form_net::Policy::DEFAULT);
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n12\r\n--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nabc\r\n--X--";
+    /// let mut seen = Bytes(0);
+    /// form_net::parse_multipart_inspected(ct, body, &limits, &policy, &mut seen)?;
+    /// assert_eq!(seen.0, 5);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn data(&mut self, part: u32, chunk: &[u8]) -> Verdict {
         let _ = (part, chunk);
         Verdict::Continue
@@ -130,18 +200,79 @@ pub trait Inspector {
     /// A complete text field (multipart) or a decoded pair (urlencoded): the
     /// value as bytes, so the inspector can apply its own charset rules.
     /// `Skip` leaves the field out of the result.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Inspector, Limits, Policy, Verdict};
+    ///
+    /// /// Leaves debugging fields out of the result.
+    /// struct DropDebug;
+    /// impl Inspector for DropDebug {
+    ///     fn field(&mut self, name: &str, _value: &[u8]) -> Verdict {
+    ///         if name.starts_with("debug_") { Verdict::Skip } else { Verdict::Continue }
+    ///     }
+    /// }
+    ///
+    /// let form = form_net::parse_urlencoded_inspected(b"a=1&debug_sql=1", &Limits::DEFAULT, &Policy::DEFAULT, &mut DropDebug)?;
+    /// assert_eq!((form.field("a"), form.field("debug_sql")), (Some("1"), None));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn field(&mut self, name: &str, value: &[u8]) -> Verdict {
         let _ = (name, value);
         Verdict::Continue
     }
 
     /// A part ended. `Skip` here is treated as `Continue`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Inspector, PartSummary, Verdict};
+    ///
+    /// struct Sizes(Vec<u64>);
+    /// impl Inspector for Sizes {
+    ///     fn part_end(&mut self, summary: &PartSummary) -> Verdict {
+    ///         self.0.push(summary.bytes);
+    ///         Verdict::Continue
+    ///     }
+    /// }
+    ///
+    /// # let ct = b"multipart/form-data; boundary=X";
+    /// # let (limits, policy) = (form_net::Limits::DEFAULT, form_net::Policy::DEFAULT);
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n12\r\n--X\r\nContent-Disposition: form-data; name=b\r\n\r\nabc\r\n--X--";
+    /// let mut sizes = Sizes(Vec::new());
+    /// form_net::parse_multipart_inspected(ct, body, &limits, &policy, &mut sizes)?;
+    /// assert_eq!(sizes.0, [2, 3]);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn part_end(&mut self, summary: &PartSummary) -> Verdict {
         let _ = summary;
         Verdict::Continue
     }
 
     /// The body ended. `Skip` here is treated as `Continue`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Inspector, Limits, Policy, Refusal, Verdict};
+    ///
+    /// /// Refuses a body without an `email` field, once the whole body is read.
+    /// struct NeedsEmail(bool);
+    /// impl Inspector for NeedsEmail {
+    ///     fn field(&mut self, name: &str, _value: &[u8]) -> Verdict {
+    ///         self.0 |= name == "email";
+    ///         Verdict::Continue
+    ///     }
+    ///     fn end(&mut self) -> Verdict {
+    ///         if self.0 { Verdict::Continue } else { Verdict::Refuse(Refusal::new(422, "app.no_email")) }
+    ///     }
+    /// }
+    ///
+    /// let r = form_net::parse_urlencoded_inspected(b"name=a", &Limits::DEFAULT, &Policy::DEFAULT, &mut NeedsEmail(false));
+    /// assert_eq!(r.unwrap_err().code(), "app.no_email");
+    /// ```
     fn end(&mut self) -> Verdict {
         Verdict::Continue
     }
@@ -150,6 +281,24 @@ pub trait Inspector {
     /// refusal included). Called once; it cannot change the outcome. The
     /// hook for security signals: a stream of refusals from one client is a
     /// probe.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{FormError, Inspector, Limits, Policy};
+    ///
+    /// /// Keeps the code of the error, for a detection layer.
+    /// struct LastError(Option<&'static str>);
+    /// impl Inspector for LastError {
+    ///     fn failed(&mut self, error: &FormError) {
+    ///         self.0 = Some(error.code());
+    ///     }
+    /// }
+    ///
+    /// let mut log = LastError(None);
+    /// let _ = form_net::parse_urlencoded_inspected(b"a=%", &Limits::DEFAULT, &Policy::DEFAULT, &mut log);
+    /// assert_eq!(log.0, Some("encoding.invalid_percent"));
+    /// ```
     fn failed(&mut self, error: &FormError) {
         let _ = error;
     }
@@ -352,6 +501,19 @@ pub struct TokenCheck<V> {
 
 impl<V: FnMut(&str) -> Result<(), Refusal>> TokenCheck<V> {
     /// A check of the field `name` with `verify`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Policy, Refusal, TokenCheck};
+    ///
+    /// let mut check = TokenCheck::new("csrf_token", |token| {
+    ///     if token == "expected" { Ok(()) } else { Err(Refusal::new(403, "csrf.rejected")) }
+    /// });
+    /// let body = b"csrf_token=forged&amount=100";
+    /// let err = form_net::parse_urlencoded_inspected(body, &Limits::DEFAULT, &Policy::DEFAULT, &mut check).unwrap_err();
+    /// assert_eq!(err.code(), "csrf.rejected");
+    /// ```
     #[must_use]
     pub const fn new(name: &'static str, verify: V) -> TokenCheck<V> {
         TokenCheck {
@@ -364,6 +526,19 @@ impl<V: FnMut(&str) -> Result<(), Refusal>> TokenCheck<V> {
     }
 
     /// Whether the token was seen and `verify` accepted it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, Policy, TokenCheck};
+    ///
+    /// let mut check = TokenCheck::new("csrf_token", |_token| Ok(()));
+    /// assert!(!check.verified());
+    /// form_net::parse_urlencoded_inspected(b"csrf_token=t", &Limits::DEFAULT, &Policy::DEFAULT, &mut check)?;
+    /// assert!(check.verified());
+    ///
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub const fn verified(&self) -> bool {
         self.verified
@@ -477,6 +652,20 @@ pub trait Sink {
     /// # Errors
     ///
     /// The sink's own errors (storage, I/O).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{MemorySink, OwnedPartHead, Sink};
+    ///
+    /// let head = OwnedPartHead::new();
+    /// let mut sink = MemorySink::new();
+    /// sink.open(&head.view())?;
+    /// sink.write(b"hi")?;
+    /// assert_eq!(sink.close()?.bytes(), b"hi");
+    ///
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn open(&mut self, head: &PartHead<'_>) -> Result<(), FormError>;
 
     /// More bytes of the current file part.
@@ -484,6 +673,20 @@ pub trait Sink {
     /// # Errors
     ///
     /// The sink's own errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{DiscardSink, OwnedPartHead, Sink};
+    ///
+    /// let mut sink = DiscardSink::default();
+    /// sink.open(&OwnedPartHead::new().view())?;
+    /// sink.write(b"first ")?;
+    /// sink.write(b"second")?;
+    /// assert_eq!(sink.close()?, 12);
+    ///
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn write(&mut self, chunk: &[u8]) -> Result<(), FormError>;
 
     /// The current file part ended.
@@ -491,9 +694,38 @@ pub trait Sink {
     /// # Errors
     ///
     /// The sink's own errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{MemorySink, OwnedPartHead, Sink};
+    ///
+    /// let mut sink = MemorySink::new();
+    /// sink.open(&OwnedPartHead::new().view())?;
+    /// sink.write(b"data")?;
+    /// let file = sink.close()?;
+    /// assert_eq!(file.len(), 4);
+    ///
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn close(&mut self) -> Result<Self::Output, FormError>;
 
     /// Discards the current file part, if any, and releases everything.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{MemorySink, OwnedPartHead, Sink};
+    ///
+    /// let mut sink = MemorySink::new();
+    /// sink.open(&OwnedPartHead::new().view())?;
+    /// sink.write(b"partial")?;
+    /// sink.abort();
+    /// // Nothing of the aborted part is kept.
+    /// assert!(sink.close()?.is_empty());
+    ///
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     fn abort(&mut self);
 }
 
@@ -570,6 +802,19 @@ mod memory {
 
     impl MemorySink {
         /// An empty sink.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use form_net::{MemorySink, OwnedPartHead, Sink};
+        ///
+        /// let mut sink = MemorySink::new();
+        /// sink.open(&OwnedPartHead::new().view())?;
+        /// sink.write(b"hi")?;
+        /// assert_eq!(sink.close()?.bytes(), b"hi");
+        ///
+        /// # Ok::<(), form_net::FormError>(())
+        /// ```
         #[must_use]
         pub fn new() -> MemorySink {
             MemorySink { current: None }

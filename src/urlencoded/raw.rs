@@ -162,6 +162,16 @@ fn scan(input: &[u8], start: usize) -> (usize, Option<usize>, u8) {
 }
 
 /// The iterator returned by [`raw_pairs`].
+///
+/// # Examples
+///
+/// ```
+/// let mut it = form_net::raw_pairs(b"a=1&b=%41", &form_net::Limits::DEFAULT);
+/// assert_eq!(it.next().unwrap()?.value_raw(), b"1");
+/// assert!(it.next().unwrap()?.value_needs_decoding());
+/// assert!(it.next().is_none());
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[derive(Clone)]
 pub struct RawPairs<'a> {
     input: &'a [u8],
@@ -244,6 +254,19 @@ impl core::iter::FusedIterator for RawPairs<'_> {}
 /// One `name=value` sequence, undecoded.
 ///
 /// `Debug` prints the offset and the lengths only: values can be secrets.
+///
+/// # Examples
+///
+/// ```
+/// use form_net::{Limits, PercentPolicy};
+///
+/// let pair = form_net::raw_pairs(b"x=1&full+name=Al", &Limits::DEFAULT).nth(1).unwrap()?;
+/// assert_eq!((pair.name_raw(), pair.offset()), (&b"full+name"[..], 4));
+/// assert!(pair.name_needs_decoding());
+/// let mut out = [0u8; 16];
+/// assert_eq!(pair.decode_name(&mut out, PercentPolicy::Refuse)?, "full name");
+/// # Ok::<(), form_net::FormError>(())
+/// ```
 #[derive(Clone, Copy)]
 pub struct RawPair<'a> {
     name: &'a [u8],

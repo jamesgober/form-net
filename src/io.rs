@@ -57,7 +57,7 @@ pub struct MultipartReader<R: Read> {
     /// Whether the `_charset_` value declared before the current part
     /// lets its text be read: the parser's record, read before the part
     /// started, as every other entry point reads it (D-128, D-141).
-    declared_ok: bool,
+    declared: crate::multipart::parser::TextRule,
     /// Bytes `save` has put on disk for this request.
     #[cfg(feature = "fs")]
     disk_used: u64,
@@ -93,6 +93,16 @@ impl<R: Read> MultipartReader<R> {
     /// # Errors
     ///
     /// `UnsupportedMediaType` and the boundary errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=note\r\n\r\nhi\r\n--X--";
+    /// let mut reader = form_net::MultipartReader::new(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let mut part = reader.next_part()?.unwrap();
+    /// assert_eq!(part.text()?, "hi");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn new(content_type: &[u8], reader: R) -> Result<Self, FormError> {
         Self::with_limits(content_type, reader, &Limits::DEFAULT, &Policy::DEFAULT)
     }
@@ -102,6 +112,20 @@ impl<R: Read> MultipartReader<R> {
     /// # Errors
     ///
     /// As [`new`](Self::new); `InvalidLimits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, MultipartReader, Policy};
+    ///
+    /// let limits = Limits::DEFAULT.with_max_value_bytes(4);
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=note\r\n\r\ntoo long\r\n--X--";
+    /// let ct = b"multipart/form-data; boundary=X";
+    /// let mut reader = MultipartReader::with_limits(ct, &body[..], &limits, &Policy::DEFAULT)?;
+    /// let mut part = reader.next_part()?.unwrap();
+    /// assert_eq!(part.text().unwrap_err().code(), "limit.value_length");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn with_limits(
         content_type: &[u8],
         reader: R,
@@ -124,13 +148,29 @@ impl<R: Read> MultipartReader<R> {
             in_part: false,
             last: None,
             done: false,
-            declared_ok: true,
+            declared: crate::multipart::parser::TextRule::Utf8,
             #[cfg(feature = "fs")]
             disk_used: 0,
         })
     }
 
     /// The token field's value, once its part has ended.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{Limits, MultipartReader, Policy, TokenField};
+    ///
+    /// let policy = Policy::DEFAULT.with_token_field(TokenField::new("csrf"));
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=csrf\r\n\r\nt0k3n\r\n--X--";
+    /// let ct = b"multipart/form-data; boundary=X";
+    /// let mut reader = MultipartReader::with_limits(ct, &body[..], &Limits::DEFAULT, &policy)?;
+    /// while let Some(mut part) = reader.next_part()? {
+    ///     part.skip()?;
+    /// }
+    /// assert_eq!(reader.captured_token(), Some("t0k3n"));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn captured_token(&self) -> Option<&str> {
         self.parser.captured_token()
@@ -160,7 +200,7 @@ impl<R: Read> MultipartReader<R> {
                 }
                 Err(e) => {
                     self.buf_used = self.buf.len();
-                    return Err(FormError::Io { kind: e.kind() });
+                    return Err(FormError::BodyRead { kind: e.kind() });
                 }
             }
         }
@@ -173,14 +213,13 @@ impl<R: Read> MultipartReader<R> {
             let input = self.buf.get(self.start..self.end).unwrap_or(&[]);
             // Before `parse`: a `_charset_` part starting in this step resets
             // the parser's record.
-            let declared_ok =
-                crate::multipart::parser::declared_readable(self.parser.declared_charset());
+            let declared = crate::multipart::parser::declared_rule(self.parser.declared_charset());
             let step = self.parser.parse(input, self.eof)?;
             self.start = self.start.saturating_add(step.consumed);
             match step.event {
                 MultipartEvent::PartStart(head) => {
                     self.head.copy_from(&head);
-                    self.declared_ok = declared_ok;
+                    self.declared = declared;
                     return Ok(Got::Start);
                 }
                 MultipartEvent::Data(bytes) => {
@@ -206,6 +245,19 @@ impl<R: Read> MultipartReader<R> {
     /// # Errors
     ///
     /// Every multipart error; `Io { kind }` from the reader.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=a\r\n\r\n1\r\n--X\r\nContent-Disposition: form-data; name=b\r\n\r\n2\r\n--X--";
+    /// let mut reader = form_net::MultipartReader::new(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let mut names = Vec::new();
+    /// while let Some(part) = reader.next_part()? {
+    ///     names.push(part.head().view().name().to_owned());
+    /// }
+    /// assert_eq!(names, ["a", "b"]);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn next_part(&mut self) -> Result<Option<PartReader<'_, R>>, FormError> {
         if self.in_part {
             self.parser.skip_part();
@@ -261,6 +313,20 @@ impl<R: Read> MultipartReader<R> {
 ///
 /// `Read` reports a parse error as `std::io::Error` with kind `InvalidData`
 /// and the `FormError` as its source.
+///
+/// # Examples
+///
+/// ```
+/// use std::io::Read;
+///
+/// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.bin\r\n\r\n0123\r\n--X--";
+/// let mut reader = form_net::MultipartReader::new(b"multipart/form-data; boundary=X", &body[..])?;
+/// let mut part = reader.next_part()?.unwrap();
+/// let mut bytes = Vec::new();
+/// part.read_to_end(&mut bytes)?;
+/// assert_eq!(bytes, b"0123");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct PartReader<'r, R: Read> {
     inner: &'r mut MultipartReader<R>,
 }
@@ -275,6 +341,17 @@ impl<R: Read> fmt::Debug for PartReader<'_, R> {
 
 impl<R: Read> PartReader<'_, R> {
     /// The part's head, copied when the part started.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhi\r\n--X--";
+    /// let mut reader = form_net::MultipartReader::new(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let part = reader.next_part()?.unwrap();
+    /// let head = part.head().view();
+    /// assert_eq!((head.name(), head.is_file()), ("f", true));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[must_use]
     pub fn head(&self) -> &OwnedPartHead {
         &self.inner.head
@@ -288,6 +365,16 @@ impl<R: Read> PartReader<'_, R> {
     ///
     /// Every multipart error; `Encoding { InvalidUtf8 | UnsupportedCharset }`;
     /// `Limit { ValueLength }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=title\r\n\r\nHoliday\r\n--X--";
+    /// let mut reader = form_net::MultipartReader::new(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let mut part = reader.next_part()?.unwrap();
+    /// assert_eq!(part.text()?, "Holiday");
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn text(&mut self) -> Result<String, FormError> {
         let own = self.inner.head.view().charset();
         let cap = self.inner.parser.limits().value() as usize;
@@ -315,9 +402,9 @@ impl<R: Read> PartReader<'_, R> {
             Some(self.inner.head.view().index()),
             self.inner.parser.bytes_seen(),
         );
-        if !own.readable(self.inner.declared_ok) {
+        if let Err(reason) = own.rule(self.inner.declared).check(&out) {
             crate::wipe::wipe_vec(&mut out);
-            return Err(FormError::encoding(EncodingError::UnsupportedCharset, at));
+            return Err(FormError::encoding(reason, at));
         }
         String::from_utf8(out).map_err(|e| {
             let mut bytes = e.into_bytes();
@@ -331,6 +418,17 @@ impl<R: Read> PartReader<'_, R> {
     /// # Errors
     ///
     /// Every multipart error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.bin\r\n\r\n0123\r\n--X--";
+    /// let mut reader = form_net::MultipartReader::new(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let mut part = reader.next_part()?.unwrap();
+    /// assert_eq!(part.skip()?, 4);
+    /// assert!(reader.next_part()?.is_none());
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     pub fn skip(&mut self) -> Result<u64, FormError> {
         self.inner.parser.skip_part();
         self.inner.pending.clear();
@@ -347,6 +445,18 @@ impl<R: Read> PartReader<'_, R> {
     /// # Errors
     ///
     /// Every multipart error; `Io`, `Store`, `Limit { Disk }`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // A memory-only store keeps the file off the file system.
+    /// let store = form_net::Store::memory_only();
+    /// let body = b"--X\r\nContent-Disposition: form-data; name=f; filename=a.txt\r\n\r\nhello\r\n--X--";
+    /// let mut reader = form_net::MultipartReader::new(b"multipart/form-data; boundary=X", &body[..])?;
+    /// let file = reader.next_part()?.unwrap().save(&store)?;
+    /// assert_eq!(file.bytes(), Some(&b"hello"[..]));
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[cfg(feature = "fs")]
     #[cfg_attr(docsrs, doc(cfg(feature = "fs")))]
     pub fn save(&mut self, store: &crate::Store) -> Result<crate::StoredFile, FormError> {

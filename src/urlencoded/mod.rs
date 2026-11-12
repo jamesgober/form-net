@@ -477,6 +477,16 @@ mod owned {
     }
 
     /// The iterator returned by [`pairs`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let names: Vec<_> = form_net::pairs(b"a=1&b=2&a=3")
+    ///     .map(|p| p.map(|(name, _)| name.into_owned()))
+    ///     .collect::<Result<_, _>>()?;
+    /// assert_eq!(names, ["a", "b", "a"]);
+    /// # Ok::<(), form_net::FormError>(())
+    /// ```
     #[derive(Clone)]
     pub struct Pairs<'a> {
         raw: RawPairs<'a>,

@@ -142,6 +142,7 @@ Exit: one release candidate with no change for two weeks of use by web-net and c
   - [ ] customs-sec as the `Inspector` (a test double today).
   - [ ] Two weeks on a deployed site (James).
 - [ ] API freeze candidates; fixes only. `0.9.1` and `0.9.2` came first; after the 0.10 API change the candidates are `0.10.x`, and the two weeks start when customs-sec and the deployment are in.
+- [x] An independent review of 0.9.2, every finding fixed with a regression test (0.11.0, D-149 to D-161).
 - [ ] Absolute times measured again on a quiet machine, against `benches/baseline/2026-10-30`; the 0.9.0 pass could only measure ratios reliably (the machine stayed at 100% load).
 - [x] Adversarial review (DIRECTIVES definition of done, item 10) with every finding fixed test-first: three independent reviews, 18 findings (one high), each fixed against its failing test (D-136 to D-146, `docs/SECURITY.md`).
 - [x] `docs/STABILITY-1.0.md` drafted (0.9.1): the frozen surface, the reading contract (accepted bodies read the same; refusals never loosened; new refusals only for reader disagreements), MSRV, and the audit table.

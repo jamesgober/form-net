@@ -88,7 +88,7 @@
 //! [repository](https://github.com/jamesgober/form-net), with
 //! `docs/ARCHITECTURE.md`, `docs/PLATFORM-NOTES.md`, and
 //! `docs/PERFORMANCE.md` (measurements against the other Rust form parsers).
-//! This release (0.10) is feature complete, optimised, hardened, polished, and in beta.
+//! This release (0.11) is feature complete, optimised, hardened, polished, and in beta.
 
 #![no_std]
 #![doc(html_root_url = "https://docs.rs/form-net")]
@@ -203,8 +203,8 @@ pub use io::{MultipartReader, PartReader};
 #[cfg(feature = "fs")]
 #[cfg_attr(docsrs, doc(cfg(feature = "fs")))]
 pub use store::{
-    SpillBudget, SpillMode, SpillQuota, Store, StoreError, StoreSink, StoreStats, StoredFile,
-    StoredReader, Upload, UploadSession, read_multipart, read_multipart_inspected,
+    PersistError, SpillBudget, SpillMode, SpillQuota, Store, StoreError, StoreSink, StoreStats,
+    StoredFile, StoredReader, Upload, UploadSession, read_multipart, read_multipart_inspected,
     read_multipart_with, sweep,
 };
 

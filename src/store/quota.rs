@@ -53,8 +53,30 @@ use loom::sync::{
 /// ```
 pub trait SpillBudget: Send + Sync + 'static {
     /// Takes `bytes` from the budget; `false` when they do not fit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{SpillBudget, SpillQuota};
+    ///
+    /// let quota = SpillQuota::new(100);
+    /// assert!(quota.reserve(60));
+    /// assert!(!quota.reserve(60)); // 120 would pass the limit
+    /// assert_eq!(quota.in_use(), 60);
+    /// ```
     fn reserve(&self, bytes: u64) -> bool;
     /// Gives back `bytes` reserved earlier.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{SpillBudget, SpillQuota};
+    ///
+    /// let quota = SpillQuota::new(100);
+    /// assert!(quota.reserve(60));
+    /// quota.release(60);
+    /// assert_eq!(quota.in_use(), 0);
+    /// ```
     fn release(&self, bytes: u64);
 }
 
@@ -95,6 +117,15 @@ impl fmt::Debug for SpillQuota {
 
 impl SpillQuota {
     /// A budget of `max_bytes`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::SpillQuota;
+    ///
+    /// let quota = SpillQuota::new(1 << 20);
+    /// assert_eq!((quota.in_use(), quota.limit()), (0, 1 << 20));
+    /// ```
     #[must_use]
     pub fn new(max_bytes: u64) -> SpillQuota {
         SpillQuota {
@@ -106,12 +137,31 @@ impl SpillQuota {
     }
 
     /// Bytes reserved now.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{SpillBudget, SpillQuota};
+    ///
+    /// let quota = SpillQuota::new(100);
+    /// assert!(quota.reserve(30));
+    /// assert_eq!(quota.in_use(), 30);
+    /// ```
     #[must_use]
     pub fn in_use(&self) -> u64 {
         self.inner.in_use.load(Ordering::Acquire)
     }
 
     /// The limit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::SpillQuota;
+    ///
+    /// let quota = SpillQuota::new(100);
+    /// assert_eq!(quota.limit(), 100);
+    /// ```
     #[must_use]
     pub fn limit(&self) -> u64 {
         self.inner.limit.load(Ordering::Acquire)
@@ -119,6 +169,19 @@ impl SpillQuota {
 
     /// Changes the limit live: reservations already made stay, new ones see
     /// the new limit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use form_net::{SpillBudget, SpillQuota};
+    ///
+    /// let quota = SpillQuota::new(100);
+    /// assert!(quota.reserve(80));
+    /// quota.set_limit(50);
+    /// // The 80 bytes reserved stay; nothing more fits.
+    /// assert_eq!((quota.in_use(), quota.limit()), (80, 50));
+    /// assert!(!quota.reserve(1));
+    /// ```
     pub fn set_limit(&self, max_bytes: u64) {
         self.inner.limit.store(max_bytes, Ordering::Release);
     }
