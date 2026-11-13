@@ -140,52 +140,100 @@ impl Limits {
 
     setter!(
         /// Sets `max_body_bytes`.
-        with_max_body_bytes, max_body_bytes, u64);
+        with_max_body_bytes,
+        max_body_bytes,
+        u64
+    );
     setter!(
         /// Sets `max_fields`.
-        with_max_fields, max_fields, u32);
+        with_max_fields,
+        max_fields,
+        u32
+    );
     setter!(
         /// Sets `max_name_bytes`.
-        with_max_name_bytes, max_name_bytes, u32);
+        with_max_name_bytes,
+        max_name_bytes,
+        u32
+    );
     setter!(
         /// Sets `max_value_bytes`.
-        with_max_value_bytes, max_value_bytes, u32);
+        with_max_value_bytes,
+        max_value_bytes,
+        u32
+    );
     setter!(
         /// Sets `max_text_bytes`.
-        with_max_text_bytes, max_text_bytes, u64);
+        with_max_text_bytes,
+        max_text_bytes,
+        u64
+    );
     setter!(
         /// Sets `max_parts`.
-        with_max_parts, max_parts, u32);
+        with_max_parts,
+        max_parts,
+        u32
+    );
     setter!(
         /// Sets `max_files`.
-        with_max_files, max_files, u32);
+        with_max_files,
+        max_files,
+        u32
+    );
     setter!(
         /// Sets `max_file_bytes`.
-        with_max_file_bytes, max_file_bytes, u64);
+        with_max_file_bytes,
+        max_file_bytes,
+        u64
+    );
     setter!(
         /// Sets `max_part_header_bytes`.
-        with_max_part_header_bytes, max_part_header_bytes, u32);
+        with_max_part_header_bytes,
+        max_part_header_bytes,
+        u32
+    );
     setter!(
         /// Sets `max_part_headers`.
-        with_max_part_headers, max_part_headers, u16);
+        with_max_part_headers,
+        max_part_headers,
+        u16
+    );
     setter!(
         /// Sets `max_filename_bytes`.
-        with_max_filename_bytes, max_filename_bytes, u32);
+        with_max_filename_bytes,
+        max_filename_bytes,
+        u32
+    );
     setter!(
         /// Sets `max_preamble_bytes`.
-        with_max_preamble_bytes, max_preamble_bytes, u32);
+        with_max_preamble_bytes,
+        max_preamble_bytes,
+        u32
+    );
     setter!(
         /// Sets `max_epilogue_bytes`.
-        with_max_epilogue_bytes, max_epilogue_bytes, u32);
+        with_max_epilogue_bytes,
+        max_epilogue_bytes,
+        u32
+    );
     setter!(
         /// Sets `max_padding_bytes`.
-        with_max_padding_bytes, max_padding_bytes, u8);
+        with_max_padding_bytes,
+        max_padding_bytes,
+        u8
+    );
     setter!(
         /// Sets `sniff_bytes`.
-        with_sniff_bytes, sniff_bytes, u32);
+        with_sniff_bytes,
+        sniff_bytes,
+        u32
+    );
     setter!(
         /// Sets `max_token_bytes`.
-        with_max_token_bytes, max_token_bytes, u16);
+        with_max_token_bytes,
+        max_token_bytes,
+        u16
+    );
 
     /// Refuses the values no body could satisfy, so a misconfiguration is
     /// found at startup: a `max_part_header_bytes` below 64 (the shortest

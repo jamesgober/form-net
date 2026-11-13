@@ -131,9 +131,9 @@ Exit: the public API checked against the portfolio's API design rules before 1.0
 - [x] `docs/API.md` in the reference layout, every public item.
 - [x] Migration note in `docs/release/v0.10.0.md`; web-net needs no change.
 
-## v0.10.x - Beta and release candidates
+## v0.11.x - Beta and release candidates
 
-0.9.1 and 0.9.2 were the first freeze candidates; 0.10.0 changed the API, so the candidates continue as 0.10.x.
+0.9.1 and 0.9.2 were the first freeze candidates; 0.10.0 (the simplicity audit) and 0.11.0 (the independent review) changed the API, so the candidates continue as 0.11.x.
 
 Exit: one release candidate with no change for two weeks of use by web-net and customs-sec.
 
@@ -141,7 +141,7 @@ Exit: one release candidate with no change for two weeks of use by web-net and c
   - [x] web-net runs both routes on 0.9.0 with csrf-sec through `TokenCheck`, with no API change (D-134; web-net `tests/actions.rs`, `examples/site.rs`).
   - [ ] customs-sec as the `Inspector` (a test double today).
   - [ ] Two weeks on a deployed site (James).
-- [ ] API freeze candidates; fixes only. `0.9.1` and `0.9.2` came first; after the 0.10 API change the candidates are `0.10.x`, and the two weeks start when customs-sec and the deployment are in.
+- [ ] API freeze candidates; fixes only. `0.9.1` and `0.9.2` came first; after the 0.10 and 0.11 API changes the candidates are `0.11.x`, and the two weeks start when customs-sec and the deployment are in.
 - [x] An independent review of 0.9.2, every finding fixed with a regression test (0.11.0, D-149 to D-161).
 - [ ] Absolute times measured again on a quiet machine, against `benches/baseline/2026-10-30`; the 0.9.0 pass could only measure ratios reliably (the machine stayed at 100% load).
 - [x] Adversarial review (DIRECTIVES definition of done, item 10) with every finding fixed test-first: three independent reviews, 18 findings (one high), each fixed against its failing test (D-136 to D-146, `docs/SECURITY.md`).
